@@ -1,0 +1,21 @@
+name: tracer-bench
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - scipy
+  - scikit-image
+  - matplotlib
+  - tifffile
+  - ipywidgets
+  - jupyter
+  - ipykernel
+  - pandas
+  - seaborn
+  - pip:
+    - scikit-fmm
+    - rivuletpy
+    - pyneval

@@ -1,0 +1,47 @@
+# ── 대용량 데이터 / 파이프라인 출력 ──────────────────────────────
+# 처리된 결과물 (output 폴더 전체)
+output/
+*/output/
+*/*/output/
+
+# 원본 이미지 데이터
+data/
+FN53/
+Vaa3D/
+benchmark/data/images/
+
+# 벤치마크 결과 SWC (재생성 가능)
+benchmark/results/
+
+# 바이너리 파일 (어디에 있든)
+*.tif
+*.tiff
+*.npz
+*.npy
+
+# ── Python ────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ── macOS ─────────────────────────────────────────────────────────
+.DS_Store
+
+# ── FileHFM 실행/데이터 파일 (플랫폼 종속, 대용량) ─────────────────
+tracer_aniso/bin/input_Data.dat
+tracer_aniso/bin/output_Data.dat
+tracer_aniso/bin/FileHFM_Isotropic3
+tracer_aniso/bin/FileHFM_Riemann3
+
+# ── Claude Code 로컬 설정 ──────────────────────────────────────────
+.claude/
+**/.claude/
+
+# ── 임시 ──────────────────────────────────────────────────────────
+tmp/
+temp/
+benchmark/\ /
