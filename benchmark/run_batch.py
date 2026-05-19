@@ -82,18 +82,26 @@ STEP_SENTINELS = {
 
 
 TARGET_VOXEL_ISO_UM = 0.35  # isotropic voxel target for step0 fractional zoom
+TUBE_RADIUS_MAX_UM  = 3.5   # must match step1_tubularity_oof.py
 
 
 def _slab_size_for(tif: Path, voxel_xy: float, base: int = 48, ref_xy: int = 1024) -> int:
-    """Scale slab size based on effective XY size after step0 fractional zoom."""
-    import tifffile as _tf
-    zoom_xy = min(1.0, voxel_xy / TARGET_VOXEL_ISO_UM)
+    """Compute slab size so that effective GPU volume (slab + 2×overlap) × XY
+    stays roughly constant relative to a 1024×1024 / 0.52µm reference."""
+    import math, tifffile as _tf
+    voxel_iso   = TARGET_VOXEL_ISO_UM if voxel_xy <= TARGET_VOXEL_ISO_UM else voxel_xy
+    zoom_xy     = voxel_xy / voxel_iso
+    overlap     = int(math.ceil(TUBE_RADIUS_MAX_UM / voxel_iso * 3))
+    ref_overlap = int(math.ceil(TUBE_RADIUS_MAX_UM / 0.52 * 3))
+
     with _tf.TiffFile(str(tif)) as t:
         page = t.pages[0]
-        y = int(page.shape[0] * zoom_xy)
-        x = int(page.shape[1] * zoom_xy)
-    ratio = (ref_xy * ref_xy) / max(y * x, 1)
-    return max(4, min(base, int(base * ratio)))
+        y = max(1, int(page.shape[0] * zoom_xy))
+        x = max(1, int(page.shape[1] * zoom_xy))
+
+    ref_eff_vol  = ref_xy * ref_xy * (base + 2 * ref_overlap)
+    target_eff_z = int(ref_eff_vol / (y * x))
+    return max(4, min(base, target_eff_z - 2 * overlap))
 
 
 def run_ours(tif: Path, out_swc: Path, sample_label: str = ""):
