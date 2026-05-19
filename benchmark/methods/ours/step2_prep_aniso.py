@@ -64,14 +64,30 @@ def main():
     T_down    = T_maxpool[::DOWNSAMPLE, ::DOWNSAMPLE, ::DOWNSAMPLE].astype(np.float32)
     del T_maxpool; gc.collect()
 
-    radius_down    = zoom(radius,    factor, order=1).astype(np.float32)
-    soma_mask_down = zoom(soma_mask, factor, order=0).astype(bool)
+    Zd, Yd, Xd = T_down.shape  # stride 기준 shape → 모든 zoom 결과를 이 shape에 맞춤
+
+    def _zoom_match(arr, fac, order):
+        """zoom 후 T_down shape에 맞게 crop/pad (off-by-one 방지)."""
+        out = zoom(arr, fac, order=order)
+        # 각 축 독립적으로 crop (초과) 또는 pad (부족)
+        slices, pads = [], []
+        for i, (s, t) in enumerate(zip(out.shape, (Zd, Yd, Xd) if arr.ndim == 3
+                                       else (Zd, Yd, Xd)[:arr.ndim])):
+            slices.append(slice(0, min(s, t)))
+            pads.append((0, max(0, t - s)))
+        out = out[tuple(slices)]
+        if any(p[1] > 0 for p in pads):
+            out = np.pad(out, pads, mode='edge')
+        return out
+
+    radius_down    = _zoom_match(radius,    factor, order=1).astype(np.float32)
+    soma_mask_down = _zoom_match(soma_mask, factor, order=0).astype(bool)
     del T, radius, soma_mask; gc.collect()
 
     print('Downsampling orient_field...', flush=True)
-    vz = zoom(orient_field[..., 0], factor, order=1).astype(np.float32)
-    vy = zoom(orient_field[..., 1], factor, order=1).astype(np.float32)
-    vx = zoom(orient_field[..., 2], factor, order=1).astype(np.float32)
+    vz = _zoom_match(orient_field[..., 0], factor, order=1).astype(np.float32)
+    vy = _zoom_match(orient_field[..., 1], factor, order=1).astype(np.float32)
+    vx = _zoom_match(orient_field[..., 2], factor, order=1).astype(np.float32)
     del orient_field; gc.collect()
 
     norm = np.sqrt(vz**2 + vy**2 + vx**2) + 1e-8
@@ -81,7 +97,6 @@ def main():
 
     voxel_down    = voxel_iso * DOWNSAMPLE
     soma_vox_down = (soma_vox * factor).astype(np.float32)
-    Zd, Yd, Xd   = T_down.shape
 
     # ── Border pad auto-detect ───────────────────────────────────
     T_z = T_down.mean(axis=(1, 2))
