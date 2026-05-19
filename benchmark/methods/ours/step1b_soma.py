@@ -25,7 +25,7 @@ SOMA_MAX_TUBULARITY   = 0.25
 SOMA_OPEN_RADIUS_UM   = 2.0
 SOMA_CLOSE_RADIUS_UM  = 1.5
 SOMA_ERODE_RADIUS_UM  = 0
-SOMA_BORDER_PAD       = 10
+SOMA_BORDER_PAD_UM    = 15.0  # µm — exclusion margin from image edges for soma detection
 SOMA_ANCHOR_OFFSET    = 0.5
 
 
@@ -59,13 +59,14 @@ def main():
 
     SOMA_SIGMA           = SOMA_SIGMA_UM         / voxel_iso
     SOMA_SEARCH_RADIUS   = max(10, int(round(SOMA_SEARCH_RADIUS_UM / voxel_iso)))
+    SOMA_BORDER_PAD      = max(10, int(round(SOMA_BORDER_PAD_UM    / voxel_iso)))
     SOMA_OPEN_RADIUS_VX  = max(1,  int(round(SOMA_OPEN_RADIUS_UM   / voxel_iso)))
     SOMA_CLOSE_RADIUS_VX = max(1,  int(round(SOMA_CLOSE_RADIUS_UM  / voxel_iso)))
     SOMA_ERODE_RADIUS_VX = max(0,  int(round(SOMA_ERODE_RADIUS_UM  / voxel_iso)))
     print(f'Soma mode: {"hollow" if SOMA_HOLLOW else "filled"}')
     print(f'  sigma={SOMA_SIGMA:.1f}  search_r={SOMA_SEARCH_RADIUS}'
           f'  open={SOMA_OPEN_RADIUS_VX}  close={SOMA_CLOSE_RADIUS_VX}'
-          f'  erode={SOMA_ERODE_RADIUS_VX}')
+          f'  erode={SOMA_ERODE_RADIUS_VX}  border_pad={SOMA_BORDER_PAD}')
 
     # ── Soma Detection ───────────────────────────────────────────
     if SOMA_VOXEL is not None:

@@ -81,20 +81,18 @@ STEP_SENTINELS = {
 }
 
 
-TARGET_VOXEL_XY_UM = 0.55  # keep post-downsample XY voxel below this threshold
+TARGET_VOXEL_ISO_UM = 0.35  # isotropic voxel target for step0 fractional zoom
 
 
-def _compute_downsample_xy(voxel_xy: float) -> int:
-    return max(1, int(TARGET_VOXEL_XY_UM / voxel_xy))
-
-
-def _slab_size_for(tif: Path, downsample_xy: int, base: int = 48, ref_xy: int = 1024) -> int:
-    """Scale slab size based on effective XY size after step0 downsampling."""
+def _slab_size_for(tif: Path, voxel_xy: float, base: int = 48, ref_xy: int = 1024) -> int:
+    """Scale slab size based on effective XY size after step0 fractional zoom."""
     import tifffile as _tf
+    zoom_xy = min(1.0, voxel_xy / TARGET_VOXEL_ISO_UM)
     with _tf.TiffFile(str(tif)) as t:
         page = t.pages[0]
-        y, x = page.shape[0] // downsample_xy, page.shape[1] // downsample_xy
-    ratio = (ref_xy * ref_xy) / (y * x)
+        y = int(page.shape[0] * zoom_xy)
+        x = int(page.shape[1] * zoom_xy)
+    ratio = (ref_xy * ref_xy) / max(y * x, 1)
     return max(4, min(base, int(base * ratio)))
 
 
@@ -105,10 +103,9 @@ def run_ours(tif: Path, out_swc: Path, sample_label: str = ""):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     voxel_xy, voxel_z = parse_voxel_sizes(tif.stem)
-    downsample_xy = _compute_downsample_xy(voxel_xy)
-    slab_size = _slab_size_for(tif, downsample_xy)
-    tqdm.write(f"  {tif.stem}: voxel_xy={voxel_xy:.4f}µm  ds_xy={downsample_xy}  "
-               f"→ viso={voxel_xy*downsample_xy:.4f}µm  slab={slab_size}")
+    voxel_iso = TARGET_VOXEL_ISO_UM if voxel_xy <= TARGET_VOXEL_ISO_UM else voxel_xy
+    slab_size = _slab_size_for(tif, voxel_xy)
+    tqdm.write(f"  {tif.stem}: voxel_xy={voxel_xy:.4f}µm  → viso={voxel_iso:.4f}µm  slab={slab_size}")
 
     steps = ["step0_preprocess", "step1_tubularity_oof", "step1b_soma",
              "step2_prep_aniso", "step3_auto"]
@@ -132,7 +129,7 @@ def run_ours(tif: Path, out_swc: Path, sample_label: str = ""):
                 extra += ["--data-path", str(tif),
                           "--voxel-xy", str(voxel_xy),
                           "--voxel-z", str(voxel_z),
-                          "--downsample-xy", str(downsample_xy)]
+                          "--target-voxel-iso", str(TARGET_VOXEL_ISO_UM)]
             if step_name == "step1_tubularity_oof":
                 extra += ["--slab-size", str(slab_size)]
                 tqdm.write(f"  slab_size={slab_size} (image {tif.stem})")

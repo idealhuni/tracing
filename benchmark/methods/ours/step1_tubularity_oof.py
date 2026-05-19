@@ -435,6 +435,30 @@ def main():
     print(f'  orient_field {orient_field.shape} float16')
     print(f'  radius_map   {radius_map.shape} float32')
 
+    # ── Tubularity MIP PNG ───────────────────────────────────────
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    aniso = voxel_iso  # already isotropic
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    vmax = float(np.percentile(T_combined[T_combined > 0], 99)) if T_combined.max() > 0 else 1.0
+    mips = [
+        ('XY (Z-MIP)', T_combined.max(axis=0), 'equal'),
+        ('XZ (Y-MIP)', T_combined.max(axis=1), 'auto'),
+        ('YZ (X-MIP)', T_combined.max(axis=2), 'auto'),
+    ]
+    for ax, (title, mip, asp) in zip(axes, mips):
+        ax.imshow(mip, cmap='hot', vmin=0, vmax=vmax, aspect=asp, origin='upper')
+        ax.set_title(title, fontsize=10)
+        ax.axis('off')
+    plt.suptitle(f'Tubularity MIP  —  voxel={voxel_iso:.4f} µm  shape={T_combined.shape}', fontsize=11)
+    plt.tight_layout()
+    out_png = out_dir / 'tubularity_mip.png'
+    plt.savefig(str(out_png), dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f'Saved: {out_png}')
+
 
 if __name__ == '__main__':
     main()

@@ -15,14 +15,14 @@ gridScale
 
 metric
 4
-236
+292
 1024
 1024
 6
 
 seeds
 2
-8861
+7946
 3
 
 exportValues

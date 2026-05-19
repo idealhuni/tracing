@@ -32,7 +32,7 @@ Z_PATH_THR            = 0.65
 COS_THR_SOMA          = 0.2
 MIN_PRIMARY_REACH_UM  = 100.0
 MAX_FALLBACK_UM       = 1.5
-GAP_LEN_UM            = 2.0
+GAP_LEN_UM            = 1.0
 GAP_T_MULT            = 3.0
 
 
@@ -124,7 +124,7 @@ def main():
     T_fg     = T_down[T_down > 0.02].ravel()
     otsu_val = float(threshold_otsu(T_fg))
 
-    MIN_T_TIP    = round(float(np.clip(otsu_val, 0.20, 0.60)), 2)
+    MIN_T_TIP    = round(float(np.clip(otsu_val * 0.75, 0.15, 0.55)), 2)
     ALPHA        = round(float(np.clip(np.log(COST_TARGET_RATIO), 4.0, 12.0)), 1)
     MIN_DIST_VOX = int(round(MIN_DIST_UM / voxel_down))
     MIN_MEAN_T   = round(MIN_T_TIP * 0.35, 2)
