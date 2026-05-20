@@ -48,10 +48,23 @@ def main():
     print(f'  Z  voxel: {VOXEL_Z:.4f} um/slice')
 
     # ── 해상도 계획 ───────────────────────────────────────────────
-    voxel_iso = TARGET_VOXEL_ISO if voxel_xy <= TARGET_VOXEL_ISO else voxel_xy
-    zoom_xy   = voxel_xy / voxel_iso   # ≤ 1.0 (downsample only)
-    zoom_z    = VOXEL_Z  / voxel_iso
+    MAX_OUTPUT_VOXELS = 700_000_000  # step1 GPU 메모리 한계 기준
+
     nZ, nY, nX = stack_raw.shape
+    voxel_iso = TARGET_VOXEL_ISO if voxel_xy <= TARGET_VOXEL_ISO else voxel_xy
+    zoom_xy   = voxel_xy / voxel_iso
+    zoom_z    = VOXEL_Z  / voxel_iso
+    est_voxels = int(nZ * zoom_z * nY * zoom_xy * nX * zoom_xy)
+
+    if est_voxels > MAX_OUTPUT_VOXELS:
+        # viso ∝ (nZ*nY*nX*vz*vxy²/MAX)^(1/3)
+        viso_min = (nZ * nY * nX * VOXEL_Z * voxel_xy**2 / MAX_OUTPUT_VOXELS) ** (1/3)
+        voxel_iso = max(voxel_iso, viso_min)
+        zoom_xy   = min(1.0, voxel_xy / voxel_iso)
+        zoom_z    = VOXEL_Z / voxel_iso
+        print(f'  Volume cap: {est_voxels/1e6:.0f}M > {MAX_OUTPUT_VOXELS/1e6:.0f}M '
+              f'→ voxel_iso adjusted to {voxel_iso:.4f} um')
+
     out_shape = (int(round(nZ * zoom_z)), int(round(nY * zoom_xy)), int(round(nX * zoom_xy)))
     print(f'  target voxel_iso : {TARGET_VOXEL_ISO} um  →  actual: {voxel_iso:.4f} um')
     print(f'  zoom_xy={zoom_xy:.4f}  zoom_z={zoom_z:.4f}')

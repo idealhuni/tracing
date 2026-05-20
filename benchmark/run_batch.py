@@ -81,15 +81,32 @@ STEP_SENTINELS = {
 }
 
 
-TARGET_VOXEL_ISO_UM = 0.35  # isotropic voxel target for step0 fractional zoom
-TUBE_RADIUS_MAX_UM  = 3.5   # must match step1_tubularity_oof.py
+TARGET_VOXEL_ISO_UM = 0.35   # isotropic voxel target for step0 fractional zoom
+TUBE_RADIUS_MAX_UM  = 3.5    # must match step1_tubularity_oof.py
+MAX_OUTPUT_VOXELS   = 700_000_000  # must match step0_preprocess.py
 
 
-def _slab_size_for(tif: Path, voxel_xy: float, base: int = 48, ref_xy: int = 1024) -> int:
+def _resolve_voxel_iso(tif: Path, voxel_xy: float, voxel_z: float) -> float:
+    """Compute the actual voxel_iso step0 will produce (with volume cap)."""
+    import tifffile as _tf
+    voxel_iso = TARGET_VOXEL_ISO_UM if voxel_xy <= TARGET_VOXEL_ISO_UM else voxel_xy
+    with _tf.TiffFile(str(tif)) as t:
+        nZ = len(t.pages)
+        nY, nX = t.pages[0].shape
+    zoom_xy = voxel_xy / voxel_iso
+    zoom_z  = voxel_z  / voxel_iso
+    if int(nZ * zoom_z * nY * zoom_xy * nX * zoom_xy) > MAX_OUTPUT_VOXELS:
+        viso_min  = (nZ * nY * nX * voxel_z * voxel_xy**2 / MAX_OUTPUT_VOXELS) ** (1/3)
+        voxel_iso = max(voxel_iso, viso_min)
+    return voxel_iso
+
+
+def _slab_size_for(tif: Path, voxel_xy: float, voxel_z: float,
+                   base: int = 48, ref_xy: int = 1024) -> int:
     """Compute slab size so that effective GPU volume (slab + 2×overlap) × XY
     stays roughly constant relative to a 1024×1024 / 0.52µm reference."""
     import math, tifffile as _tf
-    voxel_iso   = TARGET_VOXEL_ISO_UM if voxel_xy <= TARGET_VOXEL_ISO_UM else voxel_xy
+    voxel_iso   = _resolve_voxel_iso(tif, voxel_xy, voxel_z)
     zoom_xy     = voxel_xy / voxel_iso
     overlap     = int(math.ceil(TUBE_RADIUS_MAX_UM / voxel_iso * 3))
     ref_overlap = int(math.ceil(TUBE_RADIUS_MAX_UM / 0.52 * 3))
@@ -111,8 +128,8 @@ def run_ours(tif: Path, out_swc: Path, sample_label: str = ""):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     voxel_xy, voxel_z = parse_voxel_sizes(tif.stem)
-    voxel_iso = TARGET_VOXEL_ISO_UM if voxel_xy <= TARGET_VOXEL_ISO_UM else voxel_xy
-    slab_size = _slab_size_for(tif, voxel_xy)
+    voxel_iso = _resolve_voxel_iso(tif, voxel_xy, voxel_z)
+    slab_size = _slab_size_for(tif, voxel_xy, voxel_z)
     tqdm.write(f"  {tif.stem}: voxel_xy={voxel_xy:.4f}µm  → viso={voxel_iso:.4f}µm  slab={slab_size}")
 
     steps = ["step0_preprocess", "step1_tubularity_oof", "step1b_soma",

@@ -405,6 +405,8 @@ def main():
         scale_idx[z0:z1]    = best_si
 
         del best_W, best_IOOF, best_si, best_v; gc.collect()
+        if USE_GPU and DEVICE.type == 'mps':
+            torch.mps.empty_cache()
         print(f'  slab {slab_i+1}/{n_slabs}  z={z0}-{z1}  {time.time()-t0:.0f}s')
 
     # ── Ridge filling + normalize ────────────────────────────────
