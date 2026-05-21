@@ -127,8 +127,8 @@ def main():
     MIN_T_TIP    = round(float(np.clip(otsu_val * 0.75, 0.15, 0.55)), 2)
     ALPHA        = round(float(np.clip(np.log(COST_TARGET_RATIO), 4.0, 12.0)), 1)
     MIN_DIST_VOX = int(round(MIN_DIST_UM / voxel_down))
-    MIN_MEAN_T   = round(MIN_T_TIP * 0.35, 2)
-    MIN_SEG_T    = round(MIN_T_TIP * 0.05, 3)
+    MIN_MEAN_T   = round(MIN_T_TIP * 0.50, 2)
+    MIN_SEG_T    = round(MIN_T_TIP * 0.15, 3)
     MIN_PATH_LEN_UM = round(float(max(MIN_PATH_LEN_UM_FLOOR, soma_r_um * 0.5)), 1)
     MERGE_DIST_UM   = round(float(max(4.0, soma_r_um * 0.3)), 1)
 
@@ -195,6 +195,10 @@ def main():
     })
     out           = hfm.Run()
     geodesic_dist = out['values'].astype(np.float32)
+    if geodesic_dist.shape != T_down.shape:
+        raise RuntimeError(
+            f'FMM output shape {geodesic_dist.shape} != T_down shape {T_down.shape}. '
+            f'FMM may have crashed (OOM). Try reducing volume or increasing DOWNSAMPLE.')
     print(f'FMM done in {time.time()-t0:.1f}s')
     print(f'Reachable: {np.isfinite(geodesic_dist).sum():,}')
 

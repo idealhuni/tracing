@@ -83,8 +83,8 @@ def main():
             print(f'  Z-gradient detected (front-10% = {front_frac:.2f}) -> per-Z normalisation')
             soma_score = stack_norm / np.maximum(z_sums[:, None, None], 1e-8)
         else:
-            print(f'  No Z-gradient (front-10% = {front_frac:.2f}) -> standard score')
-            soma_score = (stack_norm > 0).astype(np.float32)
+            print(f'  No Z-gradient (front-10% = {front_frac:.2f}) -> intensity score')
+            soma_score = stack_norm
         soma_smooth = gaussian_filter(soma_score, sigma=SOMA_SIGMA)
         p = SOMA_BORDER_PAD
         NZ, NY, NX = soma_smooth.shape

@@ -30,6 +30,8 @@ def parse_voxel_sizes(stem: str) -> tuple[float, float]:
     """Return (voxel_xy, voxel_z) in µm from gold_standard/{stem}.pixelsize.txt."""
     pxsz = GOLD_DIR / f"{stem}.pixelsize.txt"
     if not pxsz.exists():
+        pxsz = GOLD_DIR / f"{stem}.tif.pixelsize.txt"
+    if not pxsz.exists():
         print(f"\n{'='*60}", file=sys.stderr)
         print(f"WARNING: no pixelsize.txt for '{stem}'", file=sys.stderr)
         print(f"  Expected: {pxsz}", file=sys.stderr)
@@ -82,19 +84,23 @@ STEP_SENTINELS = {
 
 
 TARGET_VOXEL_ISO_UM = 0.35   # isotropic voxel target for step0 fractional zoom
+XY_MAX              = 4096   # XY hard cap (극단적 케이스 안전망, 물리 기반 700M cap이 주 제어)
 TUBE_RADIUS_MAX_UM  = 3.5    # must match step1_tubularity_oof.py
 MAX_OUTPUT_VOXELS   = 700_000_000  # must match step0_preprocess.py
 
 
 def _resolve_voxel_iso(tif: Path, voxel_xy: float, voxel_z: float) -> float:
-    """Compute the actual voxel_iso step0 will produce (with volume cap)."""
+    """Compute the actual voxel_iso step0 will produce (mirrors step0 logic)."""
     import tifffile as _tf
     voxel_iso = TARGET_VOXEL_ISO_UM if voxel_xy <= TARGET_VOXEL_ISO_UM else voxel_xy
     with _tf.TiffFile(str(tif)) as t:
         nZ = len(t.pages)
         nY, nX = t.pages[0].shape
-    zoom_xy = voxel_xy / voxel_iso
+    # XY max cap
+    voxel_iso = max(voxel_iso, voxel_xy * max(nY, nX) / XY_MAX)
+    zoom_xy = min(1.0, voxel_xy / voxel_iso)
     zoom_z  = voxel_z  / voxel_iso
+    # Volume cap
     if int(nZ * zoom_z * nY * zoom_xy * nX * zoom_xy) > MAX_OUTPUT_VOXELS:
         viso_min  = (nZ * nY * nX * voxel_z * voxel_xy**2 / MAX_OUTPUT_VOXELS) ** (1/3)
         voxel_iso = max(voxel_iso, viso_min)
@@ -154,7 +160,8 @@ def run_ours(tif: Path, out_swc: Path, sample_label: str = ""):
                 extra += ["--data-path", str(tif),
                           "--voxel-xy", str(voxel_xy),
                           "--voxel-z", str(voxel_z),
-                          "--target-voxel-iso", str(TARGET_VOXEL_ISO_UM)]
+                          "--target-voxel-iso", str(TARGET_VOXEL_ISO_UM),
+                          "--xy-max", str(XY_MAX)]
             if step_name == "step1_tubularity_oof":
                 extra += ["--slab-size", str(slab_size)]
                 tqdm.write(f"  slab_size={slab_size} (image {tif.stem})")

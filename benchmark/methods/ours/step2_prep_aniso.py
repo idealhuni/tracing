@@ -45,7 +45,15 @@ def main():
     voxel_iso    = float(tub['voxel_iso'])
     del tub; gc.collect()
 
+    MAX_FMM_VOXELS = 60_000_000  # M tensor(9 float64) 기준 ~4.3 GB
+    NZ, NY, NX = T.shape
     DOWNSAMPLE = max(1, round(TARGET_VOXEL_DOWN_UM / voxel_iso))
+    # 볼륨 캡: 예상 voxel 수가 초과하면 DOWNSAMPLE 상향
+    est_vox = (NZ // DOWNSAMPLE) * (NY // DOWNSAMPLE) * (NX // DOWNSAMPLE)
+    if est_vox > MAX_FMM_VOXELS:
+        DOWNSAMPLE = max(DOWNSAMPLE, int(np.ceil((NZ * NY * NX / MAX_FMM_VOXELS) ** (1/3))))
+        print(f'  Volume cap: {est_vox/1e6:.0f}M > {MAX_FMM_VOXELS/1e6:.0f}M '
+              f'→ DOWNSAMPLE adjusted to {DOWNSAMPLE}')
     print(f'voxel_iso={voxel_iso:.4f} um  DOWNSAMPLE={DOWNSAMPLE}  '
           f'-> voxel_down={voxel_iso*DOWNSAMPLE:.4f} um')
 
@@ -60,7 +68,11 @@ def main():
 
     factor = 1.0 / DOWNSAMPLE
 
-    T_maxpool = maximum_filter(T, size=DOWNSAMPLE)
+    # Z 방향 먼저 max-pool로 gap 채우기 (광학적 Z-PSF blur 보상)
+    # 7 voxel × 0.35µm ≈ 2.45µm — Z PSF FWHM ~1µm + 슬라이스 간 gap 커버
+    T_z_filled = maximum_filter(T, size=(7, 1, 1))
+    T_maxpool  = maximum_filter(T_z_filled, size=(1, DOWNSAMPLE, DOWNSAMPLE))
+    del T_z_filled
     T_down    = T_maxpool[::DOWNSAMPLE, ::DOWNSAMPLE, ::DOWNSAMPLE].astype(np.float32)
     del T_maxpool; gc.collect()
 
