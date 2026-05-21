@@ -17,7 +17,7 @@ warnings.filterwarnings('ignore')
 
 # ── Config (fixed) ───────────────────────────────────────────
 COST_TARGET_RATIO     = 8000
-MIN_DIST_UM           = 20.0
+MIN_DIST_UM           = 12.0   # 20→12: 촘촘한 분기 영역 tip seed 확보
 GAMMA                 = 0.99
 SIGMA_PERP            = 1.0
 MAX_TIPS              = 4000
@@ -34,6 +34,9 @@ MIN_PRIMARY_REACH_UM  = 100.0
 MAX_FALLBACK_UM       = 1.5
 GAP_LEN_UM            = 1.0
 GAP_T_MULT            = 3.0
+MIN_T_TIP_RATIO       = 0.50   # tip detection threshold (Otsu 배수) — 낮출수록 더 많은 seed
+MIN_MEAN_T_RATIO      = 0.40   # 경로 평균 T 기준 (Otsu 배수) — tip ratio와 독립
+MIN_SEG_T_RATIO       = 0.12   # 경로 최소 T 기준 (Otsu 배수) — tip ratio와 독립
 
 
 def path_length_um(path, voxel):
@@ -124,11 +127,11 @@ def main():
     T_fg     = T_down[T_down > 0.02].ravel()
     otsu_val = float(threshold_otsu(T_fg))
 
-    MIN_T_TIP    = round(float(np.clip(otsu_val * 0.75, 0.15, 0.55)), 2)
+    MIN_T_TIP    = round(float(np.clip(otsu_val * MIN_T_TIP_RATIO,  0.10, 0.55)), 2)
     ALPHA        = round(float(np.clip(np.log(COST_TARGET_RATIO), 4.0, 12.0)), 1)
     MIN_DIST_VOX = int(round(MIN_DIST_UM / voxel_down))
-    MIN_MEAN_T   = round(MIN_T_TIP * 0.50, 2)
-    MIN_SEG_T    = round(MIN_T_TIP * 0.15, 3)
+    MIN_MEAN_T   = round(float(np.clip(otsu_val * MIN_MEAN_T_RATIO, 0.08, 0.40)), 2)
+    MIN_SEG_T    = round(float(np.clip(otsu_val * MIN_SEG_T_RATIO,  0.02, 0.12)), 3)
     MIN_PATH_LEN_UM = round(float(max(MIN_PATH_LEN_UM_FLOOR, soma_r_um * 0.5)), 1)
     MERGE_DIST_UM   = round(float(max(4.0, soma_r_um * 0.3)), 1)
 
@@ -137,7 +140,8 @@ def main():
     print('=' * 56)
     print(f'  ALPHA        = {ALPHA}  (log({COST_TARGET_RATIO})  cost@T=1={np.exp(-ALPHA):.4f})')
     print(f'  MIN_T_TIP    = {MIN_T_TIP}  (Otsu={otsu_val:.3f})')
-    print(f'  MIN_DIST_VOX = {MIN_DIST_VOX}  ({MIN_DIST_UM} um)')
+    print(f'  MIN_DIST_VOX = {MIN_DIST_VOX}  ({MIN_DIST_UM} um)'
+          f'  MIN_T_TIP_RATIO = {MIN_T_TIP_RATIO}')
     print(f'  MIN_MEAN_T   = {MIN_MEAN_T}')
     print(f'  MIN_SEG_T    = {MIN_SEG_T}')
     print(f'  MIN_PATH_LEN = {MIN_PATH_LEN_UM} um')
@@ -328,6 +332,7 @@ def main():
     print(f'  trimmed:{n_trimmed}  no_soma:{n_no_soma}  short:{n_short}'
           f'  gap_trim:{n_gap_trim}  too_short_trim:{n_too_short_trim}')
     print(f'  straight:{n_straight}  too_long:{n_too_long}  z_path:{n_z_path}')
+
 
     # ── Tree construction ────────────────────────────────────────
     _soma_surface = soma_mask_down & ~_bin_erode(soma_mask_down, iterations=1)
