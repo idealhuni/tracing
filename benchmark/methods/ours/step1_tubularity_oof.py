@@ -407,7 +407,7 @@ def main():
         del best_W, best_IOOF, best_si, best_v; gc.collect()
         if USE_GPU and DEVICE.type == 'mps':
             torch.mps.empty_cache()
-        print(f'  slab {slab_i+1}/{n_slabs}  z={z0}-{z1}  {time.time()-t0:.0f}s')
+        print(f'  slab {slab_i+1}/{n_slabs}  z={z0}-{z1}  {time.time()-t0:.0f}s', flush=True)
 
     # ── Ridge filling + normalize ────────────────────────────────
     W_combined = maximum_filter(W_combined, size=RIDGE_FILL_KERNEL)
