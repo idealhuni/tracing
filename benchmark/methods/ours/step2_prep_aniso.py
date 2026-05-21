@@ -8,9 +8,50 @@ import warnings
 from pathlib import Path
 
 import numpy as np
-from scipy.ndimage import distance_transform_edt, gaussian_filter, maximum_filter, zoom
+from scipy.ndimage import distance_transform_edt, gaussian_filter, map_coordinates, maximum_filter, zoom
 
 warnings.filterwarnings('ignore')
+
+
+def oriented_max_pool(T, orient_field, L=5, slab_size=20):
+    """V_OOF 방향으로 ±L voxel max-pool — 모든 방향의 tubularity gap 채우기."""
+    NZ, NY, NX = T.shape
+    T_out = T.copy()
+    z_base = np.arange(NZ, dtype=np.float32)
+    y_base = np.arange(NY, dtype=np.float32)
+    x_base = np.arange(NX, dtype=np.float32)
+
+    for z0 in range(0, NZ, slab_size):
+        z1   = min(z0 + slab_size, NZ)
+        zp0  = max(0, z0 - L)
+        zp1  = min(NZ, z1 + L)
+        T_sub = T[zp0:zp1]
+        dz_off = z0 - zp0
+
+        zg, yg, xg = np.meshgrid(
+            z_base[z0:z1] - zp0,
+            y_base, x_base, indexing='ij')
+
+        ov = orient_field[z0:z1]  # (slab, NY, NX, 3)
+
+        for t in range(-L, L + 1):
+            if t == 0:
+                continue
+            cz = (zg + t * ov[..., 0]).ravel()
+            cy = (yg + t * ov[..., 1]).ravel()
+            cx = (xg + t * ov[..., 2]).ravel()
+            coords = np.stack([
+                np.clip(cz, 0, zp1 - zp0 - 1),
+                np.clip(cy, 0, NY - 1),
+                np.clip(cx, 0, NX - 1),
+            ])
+            T_shifted = map_coordinates(
+                T_sub, coords, order=1, mode='nearest', prefilter=False
+            ).reshape(z1 - z0, NY, NX).astype(np.float32)
+            T_out[z0:z1] = np.maximum(T_out[z0:z1], T_shifted)
+
+    return T_out
+
 
 # ── Config (fixed) ───────────────────────────────────────────
 TARGET_VOXEL_DOWN_UM  = 0.7   # FMM 해상도 목표 (voxel_iso 기반 동적 계산)
@@ -68,11 +109,14 @@ def main():
 
     factor = 1.0 / DOWNSAMPLE
 
-    # Z 방향 먼저 max-pool로 gap 채우기 (광학적 Z-PSF blur 보상)
-    # 7 voxel × 0.35µm ≈ 2.45µm — Z PSF FWHM ~1µm + 슬라이스 간 gap 커버
-    T_z_filled = maximum_filter(T, size=(7, 1, 1))
-    T_maxpool  = maximum_filter(T_z_filled, size=(1, DOWNSAMPLE, DOWNSAMPLE))
-    del T_z_filled
+    # V_OOF 방향으로 oriented max-pool (Z+모든 방향 gap 채우기)
+    # L=2 voxel × 0.35µm = 0.70µm — Z PSF gap 커버 (L=5 대비 오탐 감소)
+    t_pool = time.time()
+    print(f'Oriented max-pool (L=2) ...', flush=True)
+    T_oriented = oriented_max_pool(T, orient_field, L=2, slab_size=20)
+    print(f'  done in {time.time()-t_pool:.1f}s', flush=True)
+    T_maxpool  = maximum_filter(T_oriented, size=(1, DOWNSAMPLE, DOWNSAMPLE))
+    del T_oriented
     T_down    = T_maxpool[::DOWNSAMPLE, ::DOWNSAMPLE, ::DOWNSAMPLE].astype(np.float32)
     del T_maxpool; gc.collect()
 
