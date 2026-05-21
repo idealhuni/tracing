@@ -37,6 +37,7 @@ GAP_T_MULT            = 3.0
 MIN_T_TIP_RATIO       = 0.50   # tip detection threshold (Otsu 배수) — 낮출수록 더 많은 seed
 MIN_MEAN_T_RATIO      = 0.40   # 경로 평균 T 기준 (Otsu 배수) — tip ratio와 독립
 MIN_SEG_T_RATIO       = 0.12   # 경로 최소 T 기준 (Otsu 배수) — tip ratio와 독립
+SMOOTH_SIGMA_VOX      = 1.0    # SWC 좌표 Gaussian smoothing sigma (voxel 단위, 계단 제거)
 
 
 def path_length_um(path, voxel):
@@ -207,6 +208,9 @@ def main():
     print(f'Reachable: {np.isfinite(geodesic_dist).sum():,}')
 
     # ── Tip detection ────────────────────────────────────────────
+    geo_finite = geodesic_dist.copy()
+    geo_finite[~np.isfinite(geo_finite)] = 0
+
     T_for_tips = gaussian_filter1d(T_down, sigma=SIGMA_Z_SMOOTH, axis=0)
     _peaks     = peak_local_max(T_for_tips, min_distance=MIN_DIST_VOX,
                                 threshold_abs=MIN_T_TIP, exclude_border=False)
@@ -225,9 +229,6 @@ def main():
     tip_coords_s = tip_coords_r[sort_idx][:MAX_TIPS]
     tip_vals_s   = tip_vals_r[sort_idx][:MAX_TIPS]
     tip_geo_s    = tip_geo_r[sort_idx][:MAX_TIPS]
-
-    geo_finite = geodesic_dist.copy()
-    geo_finite[~np.isfinite(geo_finite)] = 0
 
     print(f'Tips detected: {len(tip_coords_all):,}')
     print(f'Tips selected: {len(tip_coords_s)}'
@@ -334,6 +335,22 @@ def main():
     print(f'  straight:{n_straight}  too_long:{n_too_long}  z_path:{n_z_path}')
 
 
+    # ── Path coordinate smoothing (계단 제거) ────────────────────
+    # voxel 좌표는 node_id_map dedup에 그대로 사용, µm 좌표만 smooth
+    smooth_xyz = {}  # voxel key → (x_um, y_um, z_um) smoothed
+    for path in all_paths.values():
+        arr = np.array(path, dtype=np.float32)          # (N,3): z,y,x
+        if len(arr) >= 4 and SMOOTH_SIGMA_VOX > 0:
+            s = np.stack([gaussian_filter1d(arr[:, i], sigma=SMOOTH_SIGMA_VOX)
+                          for i in range(3)], axis=1)
+        else:
+            s = arr
+        for idx, key in enumerate(path):
+            if key not in smooth_xyz:
+                smooth_xyz[key] = (float(s[idx, 2] * voxel_down),
+                                   float(s[idx, 1] * voxel_down),
+                                   float(s[idx, 0] * voxel_down))
+
     # ── Tree construction ────────────────────────────────────────
     _soma_surface = soma_mask_down & ~_bin_erode(soma_mask_down, iterations=1)
     _surf_coords  = np.argwhere(_soma_surface).astype(np.float32)
@@ -371,16 +388,16 @@ def main():
                 continue
             z, y, x = key
             r = max(float(edt_down[z, y, x]), MIN_RADIUS_UM)
+            cx, cy, cz = smooth_xyz.get(key, (x*voxel_down, y*voxel_down, z*voxel_down))
             if soma_surf_key is not None:
-                sz, sy, sx = soma_surf_key
-                swc_rows.append((next_id, 3,
-                                 sx*voxel_down, sy*voxel_down, sz*voxel_down,
-                                 r, prev_swc_id))
+                sx, sy, sz = smooth_xyz.get(soma_surf_key,
+                    (soma_surf_key[2]*voxel_down,
+                     soma_surf_key[1]*voxel_down,
+                     soma_surf_key[0]*voxel_down))
+                swc_rows.append((next_id, 3, sx, sy, sz, r, prev_swc_id))
                 soma_surf_key = None
             else:
-                swc_rows.append((next_id, 3,
-                                 x*voxel_down, y*voxel_down, z*voxel_down,
-                                 r, prev_swc_id))
+                swc_rows.append((next_id, 3, cx, cy, cz, r, prev_swc_id))
             node_id_map[key] = next_id; prev_swc_id = next_id; next_id += 1
 
     print(f'SWC nodes: {next_id-1:,}  (branches: {len(all_paths)})')
