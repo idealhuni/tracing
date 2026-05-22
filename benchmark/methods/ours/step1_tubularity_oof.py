@@ -153,19 +153,31 @@ if USE_GPU:
         p1  = Mzy**2 + Mzx**2 + Myx**2
         q   = (Mzz + Myy + Mxx) / 3.0
         p2  = (Mzz-q)**2 + (Myy-q)**2 + (Mxx-q)**2 + 2*p1
+        del p1
         p   = torch.sqrt(torch.clamp(p2/6, min=0))
+        del p2
         ps  = p.clamp(min=1e-12)
         B00 = (Mzz-q)/ps; B11 = (Myy-q)/ps; B22 = (Mxx-q)/ps
         B01 = Mzy/ps;      B02 = Mzx/ps;      B12 = Myx/ps
+        del ps
         r   = torch.clamp((B00*(B11*B22-B12**2) - B01*(B01*B22-B12*B02)
                            + B02*(B01*B12-B11*B02)) / 2, -1, 1)
+        del B00, B11, B22, B01, B02, B12
         phi = torch.acos(r) / 3
+        del r
         tp  = float(2*np.pi/3)
         e1  = q + 2*p*torch.cos(phi)
         e2  = q + 2*p*torch.cos(phi + tp)
         e3  = q + 2*p*torch.cos(phi + 2*tp)
-        lam, _ = torch.sort(torch.stack([e1, e2, e3], dim=-1), dim=-1)
-        return lam[...,0], lam[...,1], lam[...,2]
+        del q, p, phi
+        # 3-element sorting network — avoids allocating a stacked tensor
+        a = torch.minimum(e1, e2); b = torch.maximum(e1, e2)
+        del e1, e2
+        r0 = torch.minimum(a, e3); d  = torch.maximum(a, e3)
+        del a, e3
+        r1 = torch.minimum(d, b);  r2 = torch.maximum(d, b)
+        del d, b
+        return r0, r1, r2
 
     def _eigvec_gpu(Mzz, Myy, Mxx, Mzy, Mzx, Myx, lam):
         r0 = torch.stack([Mzz - lam, Mzy, Mzx], dim=-1)
@@ -362,6 +374,7 @@ def main():
                 resp_c         = resp_t[core_s:core_e].cpu().numpy()
                 voof_c         = voof_t[core_s:core_e].cpu().numpy()
                 del resp_t, voof_t
+                if DEVICE.type == 'mps': torch.mps.empty_cache()
             else:
                 resp_full, voof_full = oof_slab_cpu(slab, float(radius), SPHERE_DIRS)
                 resp_c  = resp_full[core_s:core_e]
@@ -405,8 +418,9 @@ def main():
         scale_idx[z0:z1]    = best_si
 
         del best_W, best_IOOF, best_si, best_v; gc.collect()
-        if USE_GPU and DEVICE.type == 'mps':
-            torch.mps.empty_cache()
+        if USE_GPU:
+            _oof_cache.clear()
+            if DEVICE.type == 'mps': torch.mps.empty_cache()
         print(f'  slab {slab_i+1}/{n_slabs}  z={z0}-{z1}  {time.time()-t0:.0f}s', flush=True)
 
     # ── Ridge filling + normalize ────────────────────────────────

@@ -108,23 +108,41 @@ def _resolve_voxel_iso(tif: Path, voxel_xy: float, voxel_z: float) -> float:
 
 
 def _slab_size_for(tif: Path, voxel_xy: float, voxel_z: float,
-                   base: int = 48, ref_xy: int = 1024) -> int:
-    """Compute slab size so that effective GPU volume (slab + 2×overlap) × XY
-    stays roughly constant relative to a 1024×1024 / 0.52µm reference."""
+                   base: int = 48, gpu_gb: float = 24.0) -> int:
+    """Compute slab size from GPU memory budget.
+
+    Peak usage during OOF: ~25 single-channel tensors simultaneously
+    (slab_t×1 + cache_grids×9 + Q×6 + cardano_intermediates×9).
+    """
     import math, tifffile as _tf
-    voxel_iso   = _resolve_voxel_iso(tif, voxel_xy, voxel_z)
-    zoom_xy     = voxel_xy / voxel_iso
-    overlap     = int(math.ceil(TUBE_RADIUS_MAX_UM / voxel_iso * 3))
-    ref_overlap = int(math.ceil(TUBE_RADIUS_MAX_UM / 0.52 * 3))
+    voxel_iso = _resolve_voxel_iso(tif, voxel_xy, voxel_z)
+    overlap   = int(math.ceil(TUBE_RADIUS_MAX_UM / voxel_iso * 3))
 
-    with _tf.TiffFile(str(tif)) as t:
-        page = t.pages[0]
-        y = max(1, int(page.shape[0] * zoom_xy))
-        x = max(1, int(page.shape[1] * zoom_xy))
+    # Prefer preprocessed TIF dimensions (exact); fall back to estimating from original
+    work_dir       = ROOT / "methods" / "ours"
+    preprocessed   = work_dir / "output" / tif.stem / "stack_preprocessed.tif"
+    if preprocessed.exists():
+        with _tf.TiffFile(str(preprocessed)) as t:
+            page = t.pages[0]
+            y, x = page.shape[0], page.shape[1]
+    else:
+        zoom_xy = voxel_xy / voxel_iso
+        with _tf.TiffFile(str(tif)) as t:
+            page = t.pages[0]
+            y = max(1, int(page.shape[0] * zoom_xy))
+            x = max(1, int(page.shape[1] * zoom_xy))
 
-    ref_eff_vol  = ref_xy * ref_xy * (base + 2 * ref_overlap)
-    target_eff_z = int(ref_eff_vol / (y * x))
-    return max(4, min(base, target_eff_z - 2 * overlap))
+    # Use total system RAM × 0.75 as GPU budget (MPS shares system memory)
+    try:
+        import subprocess
+        r = subprocess.run(['sysctl', '-n', 'hw.memsize'], capture_output=True, text=True)
+        gpu_gb = int(r.stdout.strip()) / 1e9 * 0.75
+    except Exception:
+        pass
+
+    PEAK_TENSORS = 25
+    eff_z_budget = int(gpu_gb * 1e9 / (y * x * 4 * PEAK_TENSORS))
+    return max(4, min(base, eff_z_budget - 2 * overlap))
 
 
 def run_ours(tif: Path, out_swc: Path, sample_label: str = ""):
