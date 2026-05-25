@@ -52,7 +52,7 @@ def main():
     print(f'  Z  voxel: {VOXEL_Z:.4f} um/slice')
 
     # ── 해상도 계획 ───────────────────────────────────────────────
-    MAX_OUTPUT_VOXELS = 700_000_000  # step1 GPU 메모리 한계 기준
+    MAX_OUTPUT_VOXELS = 1_000_000_000  # step1 GPU 메모리 한계 기준
 
     nZ, nY, nX = stack_raw.shape
 

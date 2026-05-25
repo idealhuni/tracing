@@ -86,7 +86,7 @@ STEP_SENTINELS = {
 TARGET_VOXEL_ISO_UM = 0.35   # isotropic voxel target for step0 fractional zoom
 XY_MAX              = 4096   # XY hard cap (극단적 케이스 안전망, 물리 기반 700M cap이 주 제어)
 TUBE_RADIUS_MAX_UM  = 3.5    # must match step1_tubularity_oof.py
-MAX_OUTPUT_VOXELS   = 700_000_000  # must match step0_preprocess.py
+MAX_OUTPUT_VOXELS   = 1_000_000_000  # must match step0_preprocess.py
 
 
 def _resolve_voxel_iso(tif: Path, voxel_xy: float, voxel_z: float) -> float:

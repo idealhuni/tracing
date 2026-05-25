@@ -24,7 +24,7 @@ ST_SIGMA_RATIO      = 2.0
 ST_SIGMA_INTEG      = 2.0
 BETA                = 1.0
 LAMBDA_BLOB         = 0.3
-RIDGE_FILL_KERNEL   = 1
+RIDGE_FILL_KERNEL   = 3
 
 
 # ── Sphere sampling ───────────────────────────────────────────
