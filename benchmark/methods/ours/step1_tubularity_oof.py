@@ -24,7 +24,7 @@ ST_SIGMA_RATIO      = 2.0
 ST_SIGMA_INTEG      = 2.0
 BETA                = 1.0
 LAMBDA_BLOB         = 0.3
-RIDGE_FILL_KERNEL   = 3
+RIDGE_FILL_KERNEL   = 1
 
 
 # ── Sphere sampling ───────────────────────────────────────────
@@ -294,12 +294,14 @@ if USE_GPU:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--out-dir',   required=True)
-    ap.add_argument('--slab-size', type=int, default=48)
+    ap.add_argument('--out-dir',          required=True)
+    ap.add_argument('--slab-size',        type=int, default=48)
+    ap.add_argument('--input-downsample', type=int, default=INPUT_DOWNSAMPLE)
     args = ap.parse_args()
 
     out_dir   = Path(args.out_dir)
     SLAB_SIZE = args.slab_size
+    input_ds  = args.input_downsample
 
     PREPROCESSED_TIF  = out_dir / 'stack_preprocessed.tif'
     PREPROCESSED_META = out_dir / 'preprocess_meta.npz'
@@ -311,10 +313,11 @@ def main():
     voxel_iso = float(meta['voxel_iso'])
     stack_iso = tifffile.imread(str(PREPROCESSED_TIF)).astype(np.float32)
 
-    if INPUT_DOWNSAMPLE > 1:
+    if input_ds > 1:
         from scipy.ndimage import zoom
-        stack_iso = zoom(stack_iso, 1.0 / INPUT_DOWNSAMPLE, order=1).astype(np.float32)
-        voxel_iso = voxel_iso * INPUT_DOWNSAMPLE
+        stack_iso = zoom(stack_iso, 1.0 / input_ds, order=1).astype(np.float32)
+        voxel_iso = voxel_iso * input_ds
+        print(f'Downsampled x{input_ds}: shape={stack_iso.shape}  voxel_iso={voxel_iso:.4f} um')
 
     print(f'Loaded: {PREPROCESSED_TIF}')
     print(f'Shape : {stack_iso.shape}  voxel_iso={voxel_iso:.4f} um')

@@ -17,7 +17,7 @@ warnings.filterwarnings('ignore')
 
 # ── Config (fixed) ───────────────────────────────────────────
 COST_TARGET_RATIO     = 8000
-MIN_DIST_UM           = 12.0   # 20→12: 촘촘한 분기 영역 tip seed 확보
+MIN_DIST_UM           = 20.0   # seed 간격: 클수록 seed↓ (recall↓), 작을수록 seed↑ (FP↑)
 GAMMA                 = 0.99
 SIGMA_PERP            = 1.0
 MAX_TIPS              = 4000
@@ -32,12 +32,14 @@ Z_PATH_THR            = 0.65
 COS_THR_SOMA          = 0.2
 MIN_PRIMARY_REACH_UM  = 100.0
 MAX_FALLBACK_UM       = 1.5
-GAP_LEN_UM            = 1.0
+GAP_LEN_UM            = 2.0
 GAP_T_MULT            = 3.0
-MIN_T_TIP_RATIO       = 0.50   # tip detection threshold (Otsu 배수) — 낮출수록 더 많은 seed
+MIN_T_TIP_RATIO       = 1.00   # tip detection threshold (Otsu 배수) — 낮출수록 더 많은 seed
 MIN_MEAN_T_RATIO      = 0.40   # 경로 평균 T 기준 (Otsu 배수) — tip ratio와 독립
 MIN_SEG_T_RATIO       = 0.12   # 경로 최소 T 기준 (Otsu 배수) — tip ratio와 독립
 SMOOTH_SIGMA_VOX      = 1.0    # SWC 좌표 Gaussian smoothing sigma (voxel 단위, 계단 제거)
+PRUNE_MIN_LEN_UM      = 20.0   # leaf pruning: 이 길이 미만인 branch 후보
+PRUNE_MIN_MEAN_T_RATIO = 0.70  # leaf pruning: mean T < Otsu × 이 값이면 제거
 
 
 def path_length_um(path, voxel):
@@ -522,14 +524,80 @@ def main():
         print(f'Reach filter: removed {len(reach_remove)} primaries ({len(reach_remove_ids)} nodes)')
     else:
         print('Reach filter: nothing removed')
-    print(f'SWC nodes final: {len(swc_rows):,}')
+    print(f'SWC nodes before pruning: {len(swc_rows):,}')
+
+    # ── Leaf pruning ──────────────────────────────────────────────
+    _root_id    = next((r[0] for r in swc_rows if r[6] == -1), None)
+    prune_t_thr = otsu_val * PRUNE_MIN_MEAN_T_RATIO
+    total_pruned_nodes = 0
+
+    for _pass in range(30):
+        _sd  = {r[0]: r for r in swc_rows}
+        _chp = defaultdict(list)
+        for r in swc_rows:
+            if r[6] != -1:
+                _chp[r[6]].append(r[0])
+
+        leaves = [r[0] for r in swc_rows
+                  if r[0] != _root_id and not _chp.get(r[0])]
+
+        prune_ids = set()
+        for leaf in leaves:
+            branch = []
+            cur = leaf
+            while cur != _root_id and cur in _sd:
+                branch.append(cur)
+                par = _sd[cur][6]
+                if par == -1 or par not in _sd or par == _root_id:
+                    break
+                if len(_chp.get(par, [])) > 1:
+                    break  # branch point: 여기서 멈춤
+                cur = par
+
+            if len(branch) < 2:
+                continue
+
+            blen = sum(
+                np.sqrt((_sd[branch[i]][2] - _sd[branch[i+1]][2])**2 +
+                        (_sd[branch[i]][3] - _sd[branch[i+1]][3])**2 +
+                        (_sd[branch[i]][4] - _sd[branch[i+1]][4])**2)
+                for i in range(len(branch) - 1)
+            )
+            if blen >= PRUNE_MIN_LEN_UM:
+                continue
+
+            t_sum = 0.0
+            for nid in branch:
+                r = _sd[nid]
+                iz = int(np.clip(round(r[4] / voxel_down), 0, Zd - 1))
+                iy = int(np.clip(round(r[3] / voxel_down), 0, Yd - 1))
+                ix = int(np.clip(round(r[2] / voxel_down), 0, Xd - 1))
+                t_sum += float(T_down[iz, iy, ix])
+            if (t_sum / len(branch)) < prune_t_thr:
+                prune_ids.update(branch)
+
+        if not prune_ids:
+            break
+        swc_rows = [r for r in swc_rows if r[0] not in prune_ids]
+        total_pruned_nodes += len(prune_ids)
+
+    _chp_final = defaultdict(list)
+    for r in swc_rows:
+        if r[6] != -1:
+            _chp_final[r[6]].append(r[0])
+    n_tips_final = sum(1 for r in swc_rows
+                       if r[0] != _root_id and not _chp_final.get(r[0]))
+    print(f'Leaf pruning: {total_pruned_nodes} nodes removed'
+          f'  (len<{PRUNE_MIN_LEN_UM}µm & T<{prune_t_thr:.3f} [{PRUNE_MIN_MEAN_T_RATIO}×Otsu])')
+    print(f'SWC nodes after pruning: {len(swc_rows):,}  tips: {n_tips_final}')
 
     # ── Save SWC ─────────────────────────────────────────────────
     header = [
         f'# tracer_aniso AUTO — Riemannian FMM',
         f'# ALPHA={ALPHA}  MIN_T_TIP={MIN_T_TIP}  GAMMA={GAMMA}  SIGMA_PERP={SIGMA_PERP}',
         f'# MIN_SEG_T={MIN_SEG_T}  MIN_MEAN_T={MIN_MEAN_T}  MIN_TORTUOSITY={MIN_TORTUOSITY}',
-        f'# tips={len(tip_coords_s)}  paths={len(all_paths)}  nodes={next_id-1}',
+        f'# PRUNE_LEN={PRUNE_MIN_LEN_UM}um  PRUNE_T_RATIO={PRUNE_MIN_MEAN_T_RATIO}  PRUNE_T={prune_t_thr:.3f}',
+        f'# seed_tips={len(tip_coords_s)}  paths={len(all_paths)}  tips={n_tips_final}  nodes={len(swc_rows)}',
         '# id type x y z radius parent',
     ]
     lines = header + [
