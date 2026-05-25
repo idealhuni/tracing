@@ -57,6 +57,14 @@ def main():
     stack      = tifffile.imread(str(STACK_TIF)).astype(np.float32)
     print(f'Loaded: T_combined {T_combined.shape}  voxel_iso={voxel_iso:.4f} um')
 
+    # If step1 used INPUT_DOWNSAMPLE>1, T_combined is smaller than stack_preprocessed.
+    # Resample stack to match so all coordinates are in the same space.
+    if stack.shape != T_combined.shape:
+        from scipy.ndimage import zoom as _zoom
+        ds_factors = tuple(t / s for t, s in zip(T_combined.shape, stack.shape))
+        print(f'Stack {stack.shape} -> T_combined {T_combined.shape}: resampling stack (factors={[f"{f:.3f}" for f in ds_factors]})')
+        stack = _zoom(stack, ds_factors, order=1).astype(np.float32)
+
     SOMA_SIGMA           = SOMA_SIGMA_UM         / voxel_iso
     SOMA_SEARCH_RADIUS   = max(10, int(round(SOMA_SEARCH_RADIUS_UM / voxel_iso)))
     SOMA_BORDER_PAD      = max(10, int(round(SOMA_BORDER_PAD_UM    / voxel_iso)))
