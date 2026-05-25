@@ -23,9 +23,9 @@ FMCPUTime GeodesicCPUTime MaxStencilWidth StencilCPUTime nAccepted values
 
 values
 3
-112
-483
-483
+167
+724
+724
 
 visitedUnset
 -1

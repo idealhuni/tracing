@@ -69,6 +69,9 @@ def traceback_discrete(tip_vox, geo_dist, soma_mask, Zd, Yd, Xd,
         else:
             eff_thr = cos_thr
         cur_orient = orient_field[z, y, x] if orient_field is not None else None
+        # orient norm < 0.3 → 신뢰할 수 없는 방향 → orientation constraint 비활성화
+        orient_valid = (cur_orient is not None and
+                        float(np.dot(cur_orient, cur_orient)) >= 0.09)
         best_val = geo_dist[cur]
         best_nb  = None
         fb_val   = geo_dist[cur]
@@ -82,11 +85,15 @@ def traceback_discrete(tip_vox, geo_dist, soma_mask, Zd, Yd, Xd,
                     v = geo_dist[nz, ny, nx]
                     if v < fb_val:
                         fb_val, fb_nb = v, (nz, ny, nx)
-                    if cur_orient is not None and v < best_val:
-                        step = np.array([dz, dy, dx], np.float32)
-                        step /= np.linalg.norm(step)
-                        if abs(float(np.dot(step, cur_orient))) >= eff_thr:
+                    if v < best_val:
+                        if not orient_valid:
+                            # orient 없음 → pure geodesic (fallback 카운트 안 함)
                             best_val, best_nb = v, (nz, ny, nx)
+                        else:
+                            step = np.array([dz, dy, dx], np.float32)
+                            step /= np.linalg.norm(step)
+                            if abs(float(np.dot(step, cur_orient))) >= eff_thr:
+                                best_val, best_nb = v, (nz, ny, nx)
         if best_nb is not None:
             cur = best_nb
             fallback_count = 0

@@ -2,6 +2,7 @@
 """Step 0: Preprocess raw TIFF -> isotropic float32 volume."""
 import argparse
 import gc
+import time
 import warnings
 from pathlib import Path
 
@@ -11,6 +12,37 @@ from scipy import ndimage
 from skimage.filters import threshold_triangle
 
 warnings.filterwarnings('ignore')
+
+# ── LBN (Local Background Normalization) 파라미터 ───────────────────────────
+LBN_SIGMA_UM  = 40.0   # rolling-ball background Gaussian σ (µm)
+LBN_THRESHOLD = 0.05   # 배경 공간 불균일성 임계값 (정규화된 [0,1] 범위의 분율)
+LBN_BLOCKS    = 6      # 불균일성 측정용 축당 블록 수
+
+
+def _bg_nonuniformity(stack: np.ndarray, n_blocks: int = LBN_BLOCKS) -> float:
+    """블록별 배경(p5)의 공간적 표준편차를 신호 범위의 분율로 반환.
+    값이 높을수록 배경이 불균일 → LBN 적용 권장."""
+    step = max(1, min(stack.shape) // 48)
+    sub  = stack[::step, ::step, ::step]
+    bz   = max(1, sub.shape[0] // n_blocks)
+    by_  = max(1, sub.shape[1] // n_blocks)
+    bx   = max(1, sub.shape[2] // n_blocks)
+    bg   = []
+    for z0 in range(0, sub.shape[0], bz):
+        for y0 in range(0, sub.shape[1], by_):
+            for x0 in range(0, sub.shape[2], bx):
+                blk = sub[z0:z0+bz, y0:y0+by_, x0:x0+bx]
+                if blk.size >= 4:
+                    bg.append(float(np.percentile(blk, 5)))
+    bg = np.array(bg, dtype=np.float32)
+    sig_range = max(float(stack.max() - stack.min()), 1e-6)
+    return float(np.std(bg) / sig_range)
+
+
+def _rolling_ball(stack: np.ndarray, sigma_vox: float) -> np.ndarray:
+    """Gaussian rolling-ball 배경 차감. 음수 clip 후 float32 반환."""
+    bg = ndimage.gaussian_filter(stack.astype(np.float32), sigma=float(sigma_vox))
+    return np.maximum(stack - bg, 0.0).astype(np.float32)
 
 
 def main():
@@ -121,14 +153,34 @@ def main():
     print(f'Output: {stack_iso.shape}  {stack_iso.nbytes/1e9:.2f} GB')
     print(f'Isotropic voxel size: {voxel_iso:.4f} um')
 
+    # ── Local Background Normalization (LBN) ────────────────────────────────
+    sigma_vox   = LBN_SIGMA_UM / voxel_iso
+    bg_score    = _bg_nonuniformity(stack_iso)
+    lbn_applied = bool(bg_score > LBN_THRESHOLD)
+    print(f'LBN check: bg_nonuniformity={bg_score:.4f} (threshold={LBN_THRESHOLD})'
+          f' → {"APPLY" if lbn_applied else "SKIP"}')
+    if lbn_applied:
+        print(f'  rolling-ball σ={LBN_SIGMA_UM}µm = {sigma_vox:.1f}vox ...', end=' ', flush=True)
+        t_lbn     = time.time()
+        stack_lbn = _rolling_ball(stack_iso, sigma_vox)
+        del stack_iso; gc.collect()
+        pos       = stack_lbn[stack_lbn > 0]
+        p999      = float(np.percentile(pos, 99.9)) if pos.size > 0 else 1.0
+        stack_iso = np.clip(stack_lbn / p999, 0.0, 1.0).astype(np.float32)
+        del stack_lbn, pos; gc.collect()
+        print(f'{time.time()-t_lbn:.1f}s  '
+              f'range=[{stack_iso.min():.4f}, {stack_iso.max():.4f}]')
+
     # ── Save ────────────────────────────────────────────────────
     tifffile.imwrite(str(OUT_TIF), stack_iso)
     np.savez(str(OUT_META),
-        voxel_iso = np.float32(voxel_iso),
-        p_low     = np.float32(p_low),
-        p_high    = np.float32(p_high),
-        aniso     = np.float32(zoom_z),
-        n2v_used  = np.bool_(False),
+        voxel_iso    = np.float32(voxel_iso),
+        p_low        = np.float32(p_low),
+        p_high       = np.float32(p_high),
+        aniso        = np.float32(zoom_z),
+        n2v_used     = np.bool_(False),
+        lbn_applied  = np.bool_(lbn_applied),
+        lbn_sigma_um = np.float32(LBN_SIGMA_UM if lbn_applied else 0.0),
     )
     print(f'Saved: {OUT_TIF}  {stack_iso.shape}  {stack_iso.dtype}')
     print(f'Saved: {OUT_META}')

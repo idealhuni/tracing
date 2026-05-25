@@ -86,7 +86,7 @@ def main():
     voxel_iso    = float(tub['voxel_iso'])
     del tub; gc.collect()
 
-    MAX_FMM_VOXELS = 60_000_000  # M tensor(9 float64) 기준 ~4.3 GB
+    MAX_FMM_VOXELS = 100_000_000  # M tensor(9 float64) 기준 ~7.2 GB
     NZ, NY, NX = T.shape
     DOWNSAMPLE = max(1, round(TARGET_VOXEL_DOWN_UM / voxel_iso))
     # 볼륨 캡: 예상 voxel 수가 초과하면 DOWNSAMPLE 상향
