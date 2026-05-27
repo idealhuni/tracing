@@ -35,10 +35,10 @@ MAX_FALLBACK_UM       = 1.5
 GAP_LEN_UM            = 2.0
 GAP_T_MULT            = 3.0
 MIN_T_TIP_RATIO       = 1.00   # tip detection threshold (Otsu 배수) — 낮출수록 더 많은 seed
-MIN_MEAN_T_RATIO      = 0.35   # 경로 평균 T 기준 (Otsu 배수) — root 노트북 기준
-MIN_SEG_T_RATIO       = 0.05   # 경로 최소 T 기준 (Otsu 배수) — root 노트북 기준 (0.12→0.05)
+MIN_MEAN_T_RATIO      = 0.40   # 경로 평균 T 기준 (Otsu 배수) — tip ratio와 독립
+MIN_SEG_T_RATIO       = 0.12   # 경로 최소 T 기준 (Otsu 배수) — tip ratio와 독립
 SMOOTH_SIGMA_VOX      = 1.0    # SWC 좌표 Gaussian smoothing sigma (voxel 단위, 계단 제거)
-PRUNE_MIN_LEN_UM      = 0.0    # leaf pruning 비활성화 (root_auto 기준)
+PRUNE_MIN_LEN_UM      = 20.0   # leaf pruning: 이 길이 미만인 branch 후보
 PRUNE_MIN_MEAN_T_RATIO = 0.70  # leaf pruning: mean T < Otsu × 이 값이면 제거
 
 
@@ -137,11 +137,11 @@ def main():
     T_fg     = T_down[T_down > 0.02].ravel()
     otsu_val = float(threshold_otsu(T_fg))
 
-    MIN_T_TIP    = round(float(np.clip(otsu_val * MIN_T_TIP_RATIO,  0.20, 0.60)), 2)
+    MIN_T_TIP    = round(float(np.clip(otsu_val * MIN_T_TIP_RATIO,  0.10, 0.55)), 2)
     ALPHA        = round(float(np.clip(np.log(COST_TARGET_RATIO), 4.0, 12.0)), 1)
     MIN_DIST_VOX = int(round(MIN_DIST_UM / voxel_down))
-    MIN_MEAN_T   = round(float(np.clip(otsu_val * MIN_MEAN_T_RATIO, 0.07, 0.35)), 2)
-    MIN_SEG_T    = round(float(np.clip(otsu_val * MIN_SEG_T_RATIO,  0.01, 0.05)), 3)
+    MIN_MEAN_T   = round(float(np.clip(otsu_val * MIN_MEAN_T_RATIO, 0.08, 0.40)), 2)
+    MIN_SEG_T    = round(float(np.clip(otsu_val * MIN_SEG_T_RATIO,  0.02, 0.12)), 3)
     MIN_PATH_LEN_UM = round(float(max(MIN_PATH_LEN_UM_FLOOR, soma_r_um * 0.5)), 1)
     MERGE_DIST_UM   = round(float(max(4.0, soma_r_um * 0.3)), 1)
 

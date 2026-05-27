@@ -86,7 +86,7 @@ STEP_SENTINELS = {
 TARGET_VOXEL_ISO_UM = 0.35   # isotropic voxel target for step0 fractional zoom
 XY_MAX              = 4096   # XY hard cap (극단적 케이스 안전망, 물리 기반 700M cap이 주 제어)
 TUBE_RADIUS_MAX_UM  = 3.5    # must match step1_tubularity_oof.py
-MAX_OUTPUT_VOXELS   = 1_000_000_000  # must match step0_preprocess.py
+MAX_OUTPUT_VOXELS   = 1_500_000_000  # must match step0_preprocess.py
 
 
 def _resolve_voxel_iso(tif: Path, voxel_xy: float, voxel_z: float) -> float:
@@ -182,7 +182,7 @@ def run_ours(tif: Path, out_swc: Path, sample_label: str = ""):
                           "--xy-max", str(XY_MAX)]
             if step_name == "step1_tubularity_oof":
                 extra += ["--slab-size", str(slab_size)]
-                ds = 2 if sample_label in ("neuron2", "neuron4") else 1
+                ds = 2 if sample_label in ("neuron2", "neuron4", "FN1_01") else 1
                 if ds > 1:
                     extra += ["--input-downsample", str(ds)]
                 tqdm.write(f"  slab_size={slab_size}  ds={ds} (image {tif.stem})")
