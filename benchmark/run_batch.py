@@ -182,10 +182,10 @@ def run_ours(tif: Path, out_swc: Path, sample_label: str = ""):
                           "--xy-max", str(XY_MAX)]
             if step_name == "step1_tubularity_oof":
                 extra += ["--slab-size", str(slab_size)]
-                ds = 2 if sample_label in ("neuron2", "neuron4", "FN1_01") else 1
+                ds = 2 if voxel_z > 0.7 else 1
                 if ds > 1:
                     extra += ["--input-downsample", str(ds)]
-                tqdm.write(f"  slab_size={slab_size}  ds={ds} (image {tif.stem})")
+                tqdm.write(f"  slab_size={slab_size}  ds={ds} (voxel_z={voxel_z}µm → {'DS=2' if ds==2 else 'DS=1'})")
 
             run_py_script(py_script, work_dir, extra_args=extra)
 
