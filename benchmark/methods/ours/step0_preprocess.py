@@ -52,7 +52,7 @@ def main():
     print(f'  Z  voxel: {VOXEL_Z:.4f} um/slice')
 
     # ── 해상도 계획 ───────────────────────────────────────────────
-    MAX_OUTPUT_VOXELS = 1_500_000_000  # 24GB unified memory 기준
+    MAX_OUTPUT_VOXELS = 700_000_000  # step2 FMM 제약 역산: 100M×8(총DS³) = 800M → 보수적 700M
 
     nZ, nY, nX = stack_raw.shape
 
