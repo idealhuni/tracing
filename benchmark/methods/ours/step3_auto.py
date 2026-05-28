@@ -137,9 +137,15 @@ def main():
     T_fg     = T_down[T_down > 0.02].ravel()
     otsu_val = float(threshold_otsu(T_fg))
 
+    # T saturation 기반 seed 간격 자동 결정
+    # Z PSF saturated 이미지(neuron2/4): T_down >Otsu 비율 높음 → 20µm 유지
+    # 저노이즈 이미지(s06b/s10mm): >Otsu 비율 낮음 → 15µm로 더 촘촘하게
+    sat_frac = float((T_down > otsu_val).mean())
+    MIN_DIST_UM_actual = MIN_DIST_UM if sat_frac > 0.05 else 15.0
+
     MIN_T_TIP    = round(float(np.clip(otsu_val * MIN_T_TIP_RATIO,  0.10, 0.55)), 2)
     ALPHA        = round(float(np.clip(np.log(COST_TARGET_RATIO), 4.0, 12.0)), 1)
-    MIN_DIST_VOX = int(round(MIN_DIST_UM / voxel_down))
+    MIN_DIST_VOX = int(round(MIN_DIST_UM_actual / voxel_down))
     MIN_MEAN_T   = round(float(np.clip(otsu_val * MIN_MEAN_T_RATIO, 0.08, 0.40)), 2)
     MIN_SEG_T    = round(float(np.clip(otsu_val * MIN_SEG_T_RATIO,  0.02, 0.12)), 3)
     MIN_PATH_LEN_UM = round(float(max(MIN_PATH_LEN_UM_FLOOR, soma_r_um * 0.5)), 1)
@@ -150,7 +156,8 @@ def main():
     print('=' * 56)
     print(f'  ALPHA        = {ALPHA}  (log({COST_TARGET_RATIO})  cost@T=1={np.exp(-ALPHA):.4f})')
     print(f'  MIN_T_TIP    = {MIN_T_TIP}  (Otsu={otsu_val:.3f})')
-    print(f'  MIN_DIST_VOX = {MIN_DIST_VOX}  ({MIN_DIST_UM} um)'
+    print(f'  sat_frac     = {sat_frac:.3f}  → MIN_DIST_UM={MIN_DIST_UM_actual:.0f}')
+    print(f'  MIN_DIST_VOX = {MIN_DIST_VOX}  ({MIN_DIST_UM_actual} um)'
           f'  MIN_T_TIP_RATIO = {MIN_T_TIP_RATIO}')
     print(f'  MIN_MEAN_T   = {MIN_MEAN_T}')
     print(f'  MIN_SEG_T    = {MIN_SEG_T}')
