@@ -426,6 +426,24 @@ def main():
             if DEVICE.type == 'mps': torch.mps.empty_cache()
         print(f'  slab {slab_i+1}/{n_slabs}  z={z0}-{z1}  {time.time()-t0:.0f}s', flush=True)
 
+    # ── Orientation coherence weighting ─────────────────────────
+    # 인접 복셀들의 v_oof 방향 일관성 측정.
+    # 노이즈: 이웃마다 랜덤 방향 → 평균 상쇄 → coherence ≈ 0.1
+    # 진짜 tube: 이웃 모두 같은 방향 → 평균 유지 → coherence ≈ 0.8~1.0
+    ORIENT_COH_SIGMA = 1.5   # voxels (~1 µm at 0.7 µm voxel)
+    ORIENT_COH_GAMMA = 1.0   # exponent: 1.0 = linear, 2.0 = aggressive
+    of = orient_field.astype(np.float32)
+    coh = np.sqrt(
+        ndimage.gaussian_filter(of[..., 0], ORIENT_COH_SIGMA) ** 2 +
+        ndimage.gaussian_filter(of[..., 1], ORIENT_COH_SIGMA) ** 2 +
+        ndimage.gaussian_filter(of[..., 2], ORIENT_COH_SIGMA) ** 2
+    ).astype(np.float32)
+    del of
+    print(f'Orientation coherence: mean={coh.mean():.3f}  p10={np.percentile(coh,10):.3f}'
+          f'  p50={np.percentile(coh,50):.3f}  p90={np.percentile(coh,90):.3f}')
+    W_combined *= coh ** ORIENT_COH_GAMMA
+    del coh; gc.collect()
+
     # ── Ridge filling + normalize ────────────────────────────────
     W_combined = maximum_filter(W_combined, size=RIDGE_FILL_KERNEL)
     W_combined /= (W_combined.max() + 1e-10)
