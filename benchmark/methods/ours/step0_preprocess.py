@@ -123,6 +123,28 @@ def main():
     print(f'Output: {stack_iso.shape}  {stack_iso.nbytes/1e9:.2f} GB')
     print(f'Isotropic voxel size: {voxel_iso:.4f} um')
 
+    # ── Zero border crop ────────────────────────────────────────
+    tol = 1e-6
+    z_sig = stack_iso.max(axis=(1, 2)) > tol
+    y_sig = stack_iso.max(axis=(0, 2)) > tol
+    x_sig = stack_iso.max(axis=(0, 1)) > tol
+    z0 = int(np.where(z_sig)[0][0])  if z_sig.any() else 0
+    z1 = int(np.where(z_sig)[0][-1]) if z_sig.any() else stack_iso.shape[0] - 1
+    y0 = int(np.where(y_sig)[0][0])  if y_sig.any() else 0
+    y1 = int(np.where(y_sig)[0][-1]) if y_sig.any() else stack_iso.shape[1] - 1
+    x0 = int(np.where(x_sig)[0][0])  if x_sig.any() else 0
+    x1 = int(np.where(x_sig)[0][-1]) if x_sig.any() else stack_iso.shape[2] - 1
+    if z0 > 0 or z1 < stack_iso.shape[0]-1 or y0 > 0 or y1 < stack_iso.shape[1]-1 or x0 > 0 or x1 < stack_iso.shape[2]-1:
+        print(f'Zero border crop: Z[{z0}:{z1+1}] Y[{y0}:{y1+1}] X[{x0}:{x1+1}]'
+              f'  (제거 Z={z0}+{stack_iso.shape[0]-1-z1}'
+              f'  Y={y0}+{stack_iso.shape[1]-1-y1}'
+              f'  X={x0}+{stack_iso.shape[2]-1-x1})')
+        stack_iso = stack_iso[z0:z1+1, y0:y1+1, x0:x1+1]
+        print(f'Cropped shape: {stack_iso.shape}')
+    else:
+        z0 = y0 = x0 = 0
+        print('Zero border crop: 제거 없음')
+
     # ── Save ────────────────────────────────────────────────────
     tifffile.imwrite(str(OUT_TIF), stack_iso)
     np.savez(str(OUT_META),
@@ -131,6 +153,9 @@ def main():
         p_high    = np.float32(p_high),
         aniso     = np.float32(zoom_z),
         n2v_used  = np.bool_(False),
+        crop_z0   = np.int32(z0),
+        crop_y0   = np.int32(y0),
+        crop_x0   = np.int32(x0),
     )
     print(f'Saved: {OUT_TIF}  {stack_iso.shape}  {stack_iso.dtype}')
     print(f'Saved: {OUT_META}')

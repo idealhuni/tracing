@@ -430,13 +430,19 @@ def main():
     # 인접 복셀들의 v_oof 방향 일관성 측정.
     # 노이즈: 이웃마다 랜덤 방향 → 평균 상쇄 → coherence ≈ 0.1
     # 진짜 tube: 이웃 모두 같은 방향 → 평균 유지 → coherence ≈ 0.8~1.0
-    ORIENT_COH_SIGMA = 1.5   # voxels (~1 µm at 0.7 µm voxel)
-    ORIENT_COH_GAMMA = 1.0   # exponent: 1.0 = linear, 2.0 = aggressive
+    ORIENT_COH_GAMMA = 1.0  # exponent: 1.0 = linear, 2.0 = aggressive
+    # sigma = OOF로 검출된 neurite 반경의 중앙값 (foreground 기준)
+    # coherence는 tube 내부 orientation을 평균하는 연산이므로 neurite 반경이 자연스러운 스케일
+    _fg = W_combined > np.percentile(W_combined[W_combined > 0], 80)
+    _radii = np.array(radii_vox, dtype=np.float32)
+    coh_sigma_vox = float(np.clip(np.median(_radii[scale_idx[_fg]]), 1.5, 5.0))
+    del _fg, _radii
+    print(f'Coherence sigma: {coh_sigma_vox:.2f} vox = {coh_sigma_vox * voxel_iso:.3f} um  (OOF median radius)')
     of = orient_field.astype(np.float32)
     coh = np.sqrt(
-        ndimage.gaussian_filter(of[..., 0], ORIENT_COH_SIGMA) ** 2 +
-        ndimage.gaussian_filter(of[..., 1], ORIENT_COH_SIGMA) ** 2 +
-        ndimage.gaussian_filter(of[..., 2], ORIENT_COH_SIGMA) ** 2
+        ndimage.gaussian_filter(of[..., 0], coh_sigma_vox) ** 2 +
+        ndimage.gaussian_filter(of[..., 1], coh_sigma_vox) ** 2 +
+        ndimage.gaussian_filter(of[..., 2], coh_sigma_vox) ** 2
     ).astype(np.float32)
     del of
     print(f'Orientation coherence: mean={coh.mean():.3f}  p10={np.percentile(coh,10):.3f}'

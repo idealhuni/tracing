@@ -118,6 +118,15 @@ def main():
     OUT_SWC   = out_dir / 'neurons_auto.swc'
 
     # ── Load ────────────────────────────────────────────────────
+    _meta = np.load(str(out_dir / 'preprocess_meta.npz'))
+    _crop_x0 = float(_meta['crop_x0']) if 'crop_x0' in _meta else 0.0
+    _crop_y0 = float(_meta['crop_y0']) if 'crop_y0' in _meta else 0.0
+    _crop_z0 = float(_meta['crop_z0']) if 'crop_z0' in _meta else 0.0
+    _voxel_meta = float(_meta['voxel_iso'])
+    crop_offset_um = np.array([_crop_x0, _crop_y0, _crop_z0]) * _voxel_meta  # (x, y, z) µm
+    if crop_offset_um.any():
+        print(f'Crop offset: x={crop_offset_um[0]:.2f} y={crop_offset_um[1]:.2f} z={crop_offset_um[2]:.2f} um')
+
     d              = np.load(str(MORSE_NPZ))
     T_down         = d['T_down'].astype(np.float32)
     radius_down    = d['radius_down'].astype(np.float32)
@@ -608,8 +617,9 @@ def main():
         f'# seed_tips={len(tip_coords_s)}  paths={len(all_paths)}  tips={n_tips_final}  nodes={len(swc_rows)}',
         '# id type x y z radius parent',
     ]
+    ox, oy, oz = crop_offset_um
     lines = header + [
-        f'{r[0]} {r[1]} {r[2]:.4f} {r[3]:.4f} {r[4]:.4f} {r[5]:.4f} {r[6]}'
+        f'{r[0]} {r[1]} {r[2]+ox:.4f} {r[3]+oy:.4f} {r[4]+oz:.4f} {r[5]:.4f} {r[6]}'
         for r in swc_rows
     ]
     with open(str(OUT_SWC), 'w') as f:
