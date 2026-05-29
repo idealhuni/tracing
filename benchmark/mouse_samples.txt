@@ -1,0 +1,36 @@
+# Mouse samples from Gold166 benchmark (26 total)
+# Format: one stem per line (matches data/gold_standard/{stem}.swc)
+
+# ── Mouse RGC, UW  (voxel: 0.10/0.30µm, confocal) ──────────────────────────
+080926a.tif
+091201c1.tif
+091202c2.tif
+091204c2.tif
+091226c2.tif
+100108c3.tif
+100110c4.tif
+110203c3.tif
+
+# ── Mouse Korea, confocal  (voxel: 0.33-0.35/1.0µm) ────────────────────────
+140918c3.tif
+140918c7.tif
+140918c8.tif
+140918c9.tif
+140921c1.tif
+140921c3.tif
+140921c4.tif
+140921c5.tif
+140921c6.tif
+140921c9.tif
+140921c12.tif
+140921c14.tif
+140921c16.tif
+140921c22.tif
+
+# ── Mouse Korea, 2-photon  (voxel: 0.104/0.5µm) ─────────────────────────────
+1201_01_s06b_L36_Sum_ch2.tif
+1201_01_s10mm_ch2.tif
+
+# ── Mouse Korea, 2-photon in-vivo  (voxel: 0.27-0.54/1.0µm) ────────────────
+neuron2
+neuron4

@@ -4,7 +4,7 @@ RowMajor
 
 model
 -1
-Riemann3
+Isotropic3
 
 dims
 1
@@ -13,16 +13,15 @@ dims
 gridScale
 0
 
-metric
-4
-465
-435
-432
-6
+cost
+3
+83
+727
+440
 
 seeds
 2
-15258
+8
 3
 
 exportValues

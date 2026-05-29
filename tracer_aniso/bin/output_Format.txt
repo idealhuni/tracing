@@ -23,11 +23,11 @@ FMCPUTime GeodesicCPUTime MaxStencilWidth StencilCPUTime nAccepted values
 
 values
 3
-465
-435
-432
+83
+727
+440
 
 visitedUnset
 -1
-activeNeighs costVariation dualMetric euclideanScale factoringRadius factoringValues getStencils gridScales indexToPoint inspectSensitivity keyHelp nMaxAccepted pointToIndex progressReportLandmarks seedFlags seedValueVariation seedValues stopAtDistance stopWhenAllAccepted stopWhenAnyAccepted tips values walls 
+activeNeighs costVariation euclideanScale factoringRadius factoringValues getStencils gridScales indexToPoint inspectSensitivity keyHelp nMaxAccepted pointToIndex progressReportLandmarks seedFlags seedValueVariation seedValues speed speed_times stopAtDistance stopWhenAllAccepted stopWhenAnyAccepted tips values walls 
 
