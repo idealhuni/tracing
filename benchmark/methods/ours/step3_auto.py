@@ -223,19 +223,20 @@ def main():
     print(f'FMM done in {time.time()-t0:.1f}s')
     print(f'Reachable: {np.isfinite(geodesic_dist).sum():,}')
 
-    # ── Tip detection ────────────────────────────────────────────
+    # ── Tip detection ───────────────────────────────────────────
     geo_finite = geodesic_dist.copy()
     geo_finite[~np.isfinite(geo_finite)] = 0
 
     T_for_tips = gaussian_filter1d(T_down, sigma=SIGMA_Z_SMOOTH, axis=0)
-    _peaks     = peak_local_max(T_for_tips, min_distance=MIN_DIST_VOX,
-                                threshold_abs=MIN_T_TIP, exclude_border=False)
+
+    _peaks = peak_local_max(T_for_tips, min_distance=MIN_DIST_VOX,
+                            threshold_abs=MIN_T_TIP, exclude_border=False)
     tip_coords_all = _peaks if _peaks.dtype != bool else np.argwhere(_peaks)
     tip_vals       = T_down[tip_coords_all[:,0], tip_coords_all[:,1], tip_coords_all[:,2]]
 
-    tip_geo_all = geodesic_dist[tip_coords_all[:,0],
-                                tip_coords_all[:,1],
-                                tip_coords_all[:,2]]
+    tip_geo_all  = geodesic_dist[tip_coords_all[:,0],
+                                 tip_coords_all[:,1],
+                                 tip_coords_all[:,2]]
     reachable    = np.isfinite(tip_geo_all)
     tip_coords_r = tip_coords_all[reachable]
     tip_vals_r   = tip_vals[reachable]
@@ -246,7 +247,7 @@ def main():
     tip_vals_s   = tip_vals_r[sort_idx][:MAX_TIPS]
     tip_geo_s    = tip_geo_r[sort_idx][:MAX_TIPS]
 
-    print(f'Tips detected: {len(tip_coords_all):,}')
+    print(f'Tips detected: {len(tip_coords_all):,}  (reachable: {reachable.sum():,})')
     print(f'Tips selected: {len(tip_coords_s)}'
           f'  geo={tip_geo_s[-1]:.1f}-{tip_geo_s[0]:.1f}'
           f'  T={tip_vals_s.min():.3f}-{tip_vals_s.max():.3f}')
