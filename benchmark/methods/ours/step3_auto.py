@@ -146,18 +146,48 @@ def main():
     T_fg     = T_down[T_down > 0.02].ravel()
     otsu_val = float(threshold_otsu(T_fg))
 
-    # T saturation 기반 seed 간격 자동 결정
-    # Z PSF saturated 이미지(neuron2/4): T_down >Otsu 비율 높음 → 20µm 유지
-    # 저노이즈 이미지(s06b/s10mm): >Otsu 비율 낮음 → 15µm로 더 촘촘하게
-    sat_frac = float((T_down > otsu_val).mean())
-    MIN_DIST_UM_actual = MIN_DIST_UM if sat_frac > 0.05 else 15.0
+    # ── Background type detection (clean-background adaptive mode) ──
+    # dark_frac: clean background(RGC 등) ↑, noisy in-vivo ↓
+    dark_frac = float((T_down < 0.05).mean())
+    if dark_frac > 0.95:
+        # clean-background: clean background, 얇은 가지, intensity dip 多
+        _CTR = 8;      _GAP = 4.0; _SEG = 0.06; _TIP = 0.70
+        _DST = 3.0;    _PLN = 3.0; _ZPT = 0.99; _PRM = 20.0
+        _alp_min = 2.0
+        print(f'[Mode] clean-background  (dark_frac={dark_frac:.3f})')
+    else:
+        # conservative: noisy in-vivo 2-photon
+        _CTR = COST_TARGET_RATIO; _GAP = GAP_LEN_UM
+        _SEG = MIN_SEG_T_RATIO;   _TIP = MIN_T_TIP_RATIO
+        _DST = None;               _PLN = MIN_PATH_LEN_UM_FLOOR
+        _ZPT = Z_PATH_THR;        _PRM = MIN_PRIMARY_REACH_UM
+        _alp_min = 4.0
+        print(f'[Mode] conservative   (dark_frac={dark_frac:.3f})')
 
-    MIN_T_TIP    = round(float(np.clip(otsu_val * MIN_T_TIP_RATIO,  0.10, 0.55)), 2)
-    ALPHA        = round(float(np.clip(np.log(COST_TARGET_RATIO), 4.0, 12.0)), 1)
+    # clean-background 파라미터 덮어쓰기
+    _GAP_EFF = _GAP
+    _ZPT_EFF = _ZPT
+    _PRM_EFF = _PRM
+    _PLN_EFF = _PLN
+    _SEG_EFF = _SEG
+    _TIP_EFF = _TIP
+
+    # T saturation 기반 seed 간격
+    sat_frac = float((T_down > otsu_val).mean())
+    if _DST is not None:
+        MIN_DIST_UM_actual = _DST
+    else:
+        MIN_DIST_UM_actual = MIN_DIST_UM if sat_frac > 0.05 else 15.0
+
+    MIN_T_TIP    = round(float(np.clip(otsu_val * _TIP_EFF,  0.05, 0.55)), 2)
+    ALPHA        = round(float(np.clip(np.log(_CTR), _alp_min, 12.0)), 1)
     MIN_DIST_VOX = int(round(MIN_DIST_UM_actual / voxel_down))
-    MIN_MEAN_T   = round(float(np.clip(otsu_val * MIN_MEAN_T_RATIO, 0.08, 0.40)), 2)
-    MIN_SEG_T    = round(float(np.clip(otsu_val * MIN_SEG_T_RATIO,  0.02, 0.12)), 3)
-    MIN_PATH_LEN_UM = round(float(max(MIN_PATH_LEN_UM_FLOOR, soma_r_um * 0.5)), 1)
+    MIN_MEAN_T   = round(float(np.clip(otsu_val * MIN_MEAN_T_RATIO,  0.08, 0.40)), 2)
+    MIN_SEG_T    = round(float(np.clip(otsu_val * _SEG_EFF,          0.01, 0.12)), 3)
+    MIN_PATH_LEN_UM = round(float(max(_PLN_EFF, soma_r_um * 0.5)), 1)
+    GAP_LEN_UM   = _GAP_EFF
+    Z_PATH_THR   = _ZPT_EFF
+    MIN_PRIMARY_REACH_UM = _PRM_EFF
     MERGE_DIST_UM   = round(float(max(4.0, soma_r_um * 0.3)), 1)
 
     print('=' * 56)

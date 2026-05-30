@@ -1,7 +1,15 @@
-# Mouse samples from Gold166 benchmark (26 total)
-# Format: one stem per line (matches data/gold_standard/{stem}.swc)
-
-# ── Mouse RGC, UW  (voxel: 0.10/0.30µm, confocal) ──────────────────────────
+# 마우스 샘플 전체 목록 (이미지 + gold standard 모두 있는 것만)
+# 총 26개 | 형식: stem (data/images/{stem}.tif, data/gold_standard/{stem}.swc)
+#
+# ── Cambridge 2-photon in-vivo (voxel: 0.27~0.54 x 1.0 µm) ──────── 2개
+neuron2
+neuron4
+#
+# ── Korea 해마 confocal (voxel: 0.104 x 0.5 µm) ─────────────────── 2개
+1201_01_s06b_L36_Sum_ch2.tif
+1201_01_s10mm_ch2.tif
+#
+# ── Mouse RGC UW confocal (voxel: 0.10 x 0.30 µm) ──────────────── 22개
 080926a.tif
 091201c1.tif
 091202c2.tif
@@ -10,8 +18,6 @@
 100108c3.tif
 100110c4.tif
 110203c3.tif
-
-# ── Mouse Korea, confocal  (voxel: 0.33-0.35/1.0µm) ────────────────────────
 140918c3.tif
 140918c7.tif
 140918c8.tif
@@ -26,11 +32,7 @@
 140921c14.tif
 140921c16.tif
 140921c22.tif
-
-# ── Mouse Korea, 2-photon  (voxel: 0.104/0.5µm) ─────────────────────────────
-1201_01_s06b_L36_Sum_ch2.tif
-1201_01_s10mm_ch2.tif
-
-# ── Mouse Korea, 2-photon in-vivo  (voxel: 0.27-0.54/1.0µm) ────────────────
-neuron2
-neuron4
+#
+# 보류 (이미지가 v3draw 포맷, TIF 없음)
+# mouse_tufts: yun_dendrites_apical (v3draw)
+# mouse_ugoettingen: brightfield, confocal (v3draw)
