@@ -186,6 +186,12 @@ def run_ours(tif: Path, out_swc: Path, sample_label: str = ""):
                 if ds > 1:
                     extra += ["--input-downsample", str(ds)]
                 tqdm.write(f"  slab_size={slab_size}  ds={ds} (voxel_z={voxel_z}µm → {'DS=2' if ds==2 else 'DS=1'})")
+            if step_name == "step3_auto":
+                # 원본 이미지가 있으면 노드 위치 refinement 활성화
+                if tif.exists():
+                    extra += ["--orig-image", str(tif),
+                              "--vxy", str(voxel_xy),
+                              "--vz",  str(voxel_z)]
 
             run_py_script(py_script, work_dir, extra_args=extra)
 
