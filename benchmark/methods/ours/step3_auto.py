@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Step 3: Riemannian FMM traceback -> neurons_auto.swc"""
+import faulthandler; faulthandler.enable()
 import argparse
 import gc
 import time
@@ -146,7 +147,8 @@ def main():
 
     # ── Auto-detect params ───────────────────────────────────────
     T_fg     = T_down[T_down > 0.02].ravel()
-    otsu_val = float(threshold_otsu(T_fg))
+    otsu_val  = float(threshold_otsu(T_fg))
+    dark_frac = float((T_down < 0.05).mean())  # clean background ↑, noisy in-vivo ↓
 
     # T saturation 기반 seed 간격 자동 결정
     # Z PSF saturated 이미지(neuron2/4): T_down >Otsu 비율 높음 → 20µm 유지
@@ -236,6 +238,291 @@ def main():
             f'FMM may have crashed (OOM). Try reducing volume or increasing DOWNSAMPLE.')
     print(f'FMM done in {time.time()-t0:.1f}s')
     print(f'Reachable: {np.isfinite(geodesic_dist).sum():,}')
+
+    # ── Riemannian MST ─────────────────────────────────────────────
+    # 소마가 정상 탐지된 경우 → MST로 전체 foreground 트리 구성
+    # 소마 실패 시 → 아래 tip-seeding fallback 사용
+    _soma_ok = soma_r_um >= 2.0 and soma_mask_down.sum() >= 50
+
+    if _soma_ok:
+        from scipy.ndimage import label as _cc_label
+        t_mst = time.time()
+
+        # 파라미터: noise level에 따라 분기
+        if dark_frac > 0.95:
+            _thr = 0.001                           # clean: 사실상 T>0 전체
+            _pl  = max(1, int(8.0  / voxel_down))  # leaf pruning 길이 threshold
+            _pt  = otsu_val * 0.50                 # leaf pruning T threshold
+        else:
+            _thr = otsu_val * 0.20                 # noisy: background bridge 차단
+            _pl  = max(1, int(15.0 / voxel_down))
+            _pt  = otsu_val * 0.55
+        print(f'[MST] mode={"clean" if dark_frac>0.95 else "noisy"}  '
+              f'dark_frac={dark_frac:.3f}  T_thr={_thr:.4f}')
+
+        # 1. 소마 연결 CC → neuron_mask
+        # CC로 경로 끊김 없이 소마에서 연결된 전체 foreground 확보
+        if dark_frac > 0.95:
+            _thr_cc = otsu_val * 0.08
+        else:
+            _thr_cc = otsu_val * 0.20   # noisy: 배경 차단 + 경로 보전
+
+        _lbl = _cc_label(((T_down > _thr_cc) | soma_mask_down))[0]
+        _sl  = np.unique(_lbl[soma_mask_down]); _sl = _sl[_sl > 0]
+        neuron_mask = (_lbl == int(_sl[0])) & np.isfinite(geodesic_dist)
+        del _lbl; gc.collect()
+        print(f'  CC T_thr={_thr_cc:.4f}  fg={neuron_mask.sum():,}')
+
+        _geo_nm = geodesic_dist[neuron_mask]
+        if len(_geo_nm) > 200:
+            _geo_cap = float(np.percentile(_geo_nm, 99.0))
+            neuron_mask &= (geodesic_dist <= _geo_cap)
+            print(f'  Geodesic cap={_geo_cap:.2f}')
+
+        fg   = np.argwhere(neuron_mask)
+        N    = len(fg)
+        fg_d = geodesic_dist[fg[:,0], fg[:,1], fg[:,2]]
+        is_soma_v = soma_mask_down[fg[:,0], fg[:,1], fg[:,2]]  # numpy 벡터화
+        print(f'  Foreground: {N:,} voxels')
+
+        # 2. Parent 배정 — numpy 벡터화 (Python loop 제거)
+        # 26방향을 순회하며 각 voxel의 최소 geodesic 이웃 방향을 numpy 배열 연산으로 결정
+        t_par = time.time()
+        _dirs = [(dz,dy,dx) for dz in(-1,0,1) for dy in(-1,0,1) for dx in(-1,0,1)
+                 if not(dz==dy==dx==0)]
+        _dnorms = [(dz,dy,dx, dz/(dz*dz+dy*dy+dx*dx)**0.5,
+                               dy/(dz*dz+dy*dy+dx*dx)**0.5,
+                               dx/(dz*dz+dy*dy+dx*dx)**0.5)
+                   for dz,dy,dx in _dirs]
+
+        def _nbr(arr, dz, dy, dx):
+            """out[z,y,x] = arr[z+dz, y+dy, x+dx], 경계=inf"""
+            out = np.full_like(arr, np.inf)
+            sz = slice(max(0,dz), Zd+min(0,dz) if dz else None)
+            sy = slice(max(0,dy), Yd+min(0,dy) if dy else None)
+            sx = slice(max(0,dx), Xd+min(0,dx) if dx else None)
+            dz_= slice(max(0,-dz), Zd+min(0,-dz) if -dz else None)
+            dy_= slice(max(0,-dy), Yd+min(0,-dy) if -dy else None)
+            dx_= slice(max(0,-dx), Xd+min(0,-dx) if -dx else None)
+            out[dz_,dy_,dx_] = arr[sz,sy,sx]
+            return out
+
+        ov_z = orient_down[...,0]; ov_y = orient_down[...,1]; ov_x = orient_down[...,2]
+        orient_conf = ov_z**2 + ov_y**2 + ov_x**2
+        orient_valid = orient_conf >= 0.09
+
+        # OC(orientation-constrained) + FB(fallback) 각각 최소 geodesic 추적
+        min_oc = np.full((Zd,Yd,Xd), np.inf, dtype=np.float32)
+        min_fb = np.full((Zd,Yd,Xd), np.inf, dtype=np.float32)
+        pdz_oc = np.zeros((Zd,Yd,Xd), dtype=np.int8)
+        pdy_oc = np.zeros((Zd,Yd,Xd), dtype=np.int8)
+        pdx_oc = np.zeros((Zd,Yd,Xd), dtype=np.int8)
+        pdz_fb = np.zeros((Zd,Yd,Xd), dtype=np.int8)
+        pdy_fb = np.zeros((Zd,Yd,Xd), dtype=np.int8)
+        pdx_fb = np.zeros((Zd,Yd,Xd), dtype=np.int8)
+
+        for dz,dy,dx,sdz,sdy,sdx in _dnorms:
+            ng = _nbr(geodesic_dist, dz, dy, dx)
+            base = neuron_mask & (ng < geodesic_dist)  # inf < inf = False 자동 처리
+            # Fallback
+            bfb = base & (ng < min_fb)
+            min_fb[bfb]=ng[bfb]; pdz_fb[bfb]=dz; pdy_fb[bfb]=dy; pdx_fb[bfb]=dx
+            # Orientation-constrained
+            cos = np.abs(np.float32(sdz)*ov_z + np.float32(sdy)*ov_y + np.float32(sdx)*ov_x)
+            oc  = base & (~orient_valid | (cos >= 0.30))
+            boc = oc & (ng < min_oc)
+            min_oc[boc]=ng[boc]; pdz_oc[boc]=dz; pdy_oc[boc]=dy; pdx_oc[boc]=dx
+
+        # OC 없는 voxel → FB로 대체
+        no_oc = neuron_mask & ~np.isfinite(min_oc) & np.isfinite(min_fb)
+        pdz_oc[no_oc]=pdz_fb[no_oc]; pdy_oc[no_oc]=pdy_fb[no_oc]; pdx_oc[no_oc]=pdx_fb[no_oc]
+        del min_oc, min_fb, pdz_fb, pdy_fb, pdx_fb, ng, base, bfb, boc, oc, cos, orient_conf
+        gc.collect()
+
+        # voxel 좌표 → fg 인덱스 (c2i 대체, 3D 배열로 O(1) lookup)
+        voxel_to_idx = np.full((Zd,Yd,Xd), -1, dtype=np.int32)
+        voxel_to_idx[fg[:,0], fg[:,1], fg[:,2]] = np.arange(N, dtype=np.int32)
+
+        # par 배열: 각 fg voxel의 parent fg 인덱스 (numpy 배열 인덱싱으로 일괄 계산)
+        fgz, fgy, fgx = fg[:,0].astype(np.int32), fg[:,1].astype(np.int32), fg[:,2].astype(np.int32)
+        pz = fgz + pdz_oc[fgz,fgy,fgx].astype(np.int32)
+        py = fgy + pdy_oc[fgz,fgy,fgx].astype(np.int32)
+        px = fgx + pdx_oc[fgz,fgy,fgx].astype(np.int32)
+        in_b = (pz>=0)&(pz<Zd)&(py>=0)&(py<Yd)&(px>=0)&(px<Xd)
+        pz2 = np.where(in_b, pz, 0); py2 = np.where(in_b, py, 0); px2 = np.where(in_b, px, 0)
+        par = np.where(in_b, voxel_to_idx[pz2,py2,px2], -1).astype(np.int32)
+        par[is_soma_v] = -1
+        del pdz_oc, pdy_oc, pdx_oc, pz, py, px, pz2, py2, px2, in_b
+        gc.collect()
+        print(f'  Parent assignment: {time.time()-t_par:.1f}s (numpy)')
+
+        # 3~5. Children 구성 + DFS + Pruning — Numba JIT
+        from numba import njit as _njit
+
+        @_njit(cache=True)
+        def _build_swc(par, fg_z, fg_y, fg_x, is_soma_v, radius_flat,
+                       soma_root, smp_vox, voxel_down, ox, oy, oz,
+                       min_r, N, Yd, Xd, pl, pt, T_flat):
+            # ── Children CSR ────────────────────────────────────────
+            child_cnt = np.zeros(N, dtype=np.int32)
+            for i in range(N):
+                if par[i] >= 0: child_cnt[par[i]] += 1
+            ch_ptr = np.zeros(N + 1, dtype=np.int32)
+            for i in range(N): ch_ptr[i+1] = ch_ptr[i] + child_cnt[i]
+            ch_idx = np.empty(ch_ptr[N], dtype=np.int32)
+            fill   = np.zeros(N, dtype=np.int32)
+            for i in range(N):
+                p = par[i]
+                if p >= 0:
+                    ch_idx[ch_ptr[p] + fill[p]] = i
+                    fill[p] += 1
+
+            # ── DFS → SWC ──────────────────────────────────────────
+            # swc_p: 0-indexed Numba parent index, -1 = soma child
+            max_nodes = N // smp_vox + 100000
+            swc_x = np.empty(max_nodes, dtype=np.float32)
+            swc_y = np.empty(max_nodes, dtype=np.float32)
+            swc_z = np.empty(max_nodes, dtype=np.float32)
+            swc_r = np.empty(max_nodes, dtype=np.float32)
+            swc_p = np.full(max_nodes, -1, dtype=np.int32)  # 0-indexed parent
+            n_out = 0
+
+            stk_ci  = np.empty(N, dtype=np.int32)
+            stk_ps  = np.empty(N, dtype=np.int32)  # 0-indexed numba parent (-1=soma)
+            stk_st  = np.empty(N, dtype=np.int32)
+            stk_top = 0
+            vis = np.zeros(N, dtype=np.bool_)
+
+            # 모든 소마 복셀에서 DFS 시작 (각 soma 복셀에 붙은 dendrite 커버)
+            stk_top = 0
+            for si in range(N):
+                if is_soma_v[si]:
+                    stk_ci[stk_top] = si
+                    stk_ps[stk_top] = -1
+                    stk_st[stk_top] = 0
+                    stk_top += 1
+
+            while stk_top > 0:
+                stk_top -= 1
+                ci = stk_ci[stk_top]
+                ps = stk_ps[stk_top]   # 0-indexed numba parent, -1=soma
+                st = stk_st[stk_top]
+                if vis[ci]: continue
+                vis[ci] = True
+
+                if not is_soma_v[ci]:
+                    n_nsk = 0
+                    for k in range(ch_ptr[ci], ch_ptr[ci+1]):
+                        if not is_soma_v[ch_idx[k]]: n_nsk += 1
+                    if n_nsk != 1 or st >= smp_vox:
+                        z, y, x = fg_z[ci], fg_y[ci], fg_x[ci]
+                        r = radius_flat[z*Yd*Xd + y*Xd + x]
+                        if r < min_r: r = min_r
+                        if n_out < max_nodes:
+                            swc_x[n_out] = x * voxel_down + ox
+                            swc_y[n_out] = y * voxel_down + oy
+                            swc_z[n_out] = z * voxel_down + oz
+                            swc_r[n_out] = r
+                            swc_p[n_out] = ps  # 0-indexed parent
+                            ps = n_out         # 이 노드의 0-indexed ID
+                            n_out += 1
+                        st = 0
+
+                for k in range(ch_ptr[ci+1]-1, ch_ptr[ci]-1, -1):
+                    kid = ch_idx[k]
+                    if not vis[kid]:
+                        stk_ci[stk_top] = kid
+                        stk_ps[stk_top] = ps
+                        stk_st[stk_top] = 0 if is_soma_v[ci] else st+1
+                        stk_top += 1
+
+            # ── Leaf pruning ────────────────────────────────────────
+            for _pass in range(20):
+                swc_ch = np.zeros(n_out, dtype=np.int32)
+                for i in range(n_out):
+                    p = swc_p[i]
+                    if 0 <= p < n_out: swc_ch[p] += 1
+
+                pruned = False
+                keep = np.ones(n_out, dtype=np.bool_)
+                for li in range(n_out):
+                    if swc_ch[li] > 0: continue
+                    br_len = 0; t_sum = 0.0; cur = li
+                    while cur >= 0:
+                        br_len += 1
+                        xi = int((swc_x[cur]-ox)/voxel_down + 0.5)
+                        yi = int((swc_y[cur]-oy)/voxel_down + 0.5)
+                        zi = int((swc_z[cur]-oz)/voxel_down + 0.5)
+                        t_sum += T_flat[zi*Yd*Xd + yi*Xd + xi]
+                        p = swc_p[cur]
+                        if p < 0 or swc_ch[p] > 1: break
+                        cur = p
+                    if 2 <= br_len <= pl and t_sum/br_len < pt:
+                        cur = li
+                        while cur >= 0:
+                            p = swc_p[cur]
+                            keep[cur] = False; pruned = True
+                            if p < 0 or swc_ch[p] > 1: break
+                            cur = p
+                if not pruned: break
+                remap = np.full(n_out, -1, dtype=np.int32)
+                new_n = 0
+                for i in range(n_out):
+                    if keep[i]: remap[i] = new_n; new_n += 1
+                for i in range(n_out):
+                    if keep[i]:
+                        ni = remap[i]
+                        swc_x[ni]=swc_x[i]; swc_y[ni]=swc_y[i]
+                        swc_z[ni]=swc_z[i]; swc_r[ni]=swc_r[i]
+                        op = swc_p[i]
+                        swc_p[ni] = remap[op] if op>=0 and remap[op]>=0 else -1
+                n_out = new_n
+
+            return swc_x[:n_out], swc_y[:n_out], swc_z[:n_out], swc_r[:n_out], swc_p[:n_out]
+
+        soma_root = int(np.where(is_soma_v)[0][np.argmin(fg_d[is_soma_v])])
+        smp_vox   = max(3, int(round(3.0/voxel_down)))
+        ox_m,oy_m,oz_m = float(crop_offset_um[0]),float(crop_offset_um[1]),float(crop_offset_um[2])
+        _ss = soma_mask_down & ~_bin_erode(soma_mask_down, iterations=1)
+        _sc = np.argwhere(_ss).astype(np.float32).mean(axis=0) if _ss.any() else soma_vox_down
+
+        print(f'  Numba DFS 컴파일 + 실행 중...')
+        _sx, _sy, _sz, _sr, _sp = _build_swc(
+            par, fgz, fgy, fgx, is_soma_v,
+            radius_down.ravel().astype(np.float32),
+            soma_root, smp_vox, np.float32(voxel_down),
+            np.float32(ox_m), np.float32(oy_m), np.float32(oz_m),
+            np.float32(MIN_RADIUS_UM), N, Yd, Xd,
+            _pl, np.float32(_pt), T_down.ravel().astype(np.float32))
+
+        # 소마 노드 + Numba 결과 조립
+        # swc_p[i]: 0-indexed Numba parent (-1 → soma=SWC ID 1)
+        # Numba node i → Python SWC ID i+2
+        soma_x = float(_sc[2])*voxel_down+ox_m
+        soma_y = float(_sc[1])*voxel_down+oy_m
+        soma_z = float(_sc[0])*voxel_down+oz_m
+        swc_rows = [(1,1,soma_x,soma_y,soma_z,soma_r_um,-1)]
+        for i in range(len(_sx)):
+            p0 = int(_sp[i])
+            pid = (p0 + 2) if p0 >= 0 else 1   # 0-idx → SWC ID
+            swc_rows.append((i+2,3,float(_sx[i]),float(_sy[i]),
+                             float(_sz[i]),float(_sr[i]),pid))
+
+        _nt = sum(1 for r in swc_rows if r[6]!=-1 and
+                  not any(rr[6]==r[0] for rr in swc_rows))
+        print(f'  MST done: {len(swc_rows):,} nodes  tips={_nt}  ({time.time()-t_mst:.1f}s)')
+
+        header=[f'# tracer_aniso AUTO — Riemannian MST',
+                f'# ALPHA={ALPHA}  dark_frac={dark_frac:.3f}  T_thr={_thr:.4f}',
+                '# id type x y z radius parent']
+        lines=header+[f'{r[0]} {r[1]} {r[2]:.4f} {r[3]:.4f} {r[4]:.4f} {r[5]:.4f} {r[6]}'
+                      for r in swc_rows]
+        with open(str(OUT_SWC),'w') as f: f.write('\n'.join(lines)+'\n')
+        print(f'Saved: {OUT_SWC}')
+        return
+
+    # ── Tip-seeding fallback (소마 탐지 실패 시) ───────────────────
+    print(f'[Fallback] soma_ok=False → tip-seeding')
 
     # ── Tip detection ───────────────────────────────────────────
     geo_finite = geodesic_dist.copy()
