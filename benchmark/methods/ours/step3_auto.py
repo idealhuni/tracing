@@ -114,6 +114,7 @@ def main():
                     help='원본 이미지 TIF 경로 (원본 공간에서 노드 위치 refinement)')
     ap.add_argument('--vxy', type=float, default=None, help='원본 이미지 XY voxel 크기 (µm)')
     ap.add_argument('--vz',  type=float, default=None, help='원본 이미지 Z voxel 크기 (µm)')
+    ap.add_argument('--alpha', type=float, default=None, help='FMM ALPHA 직접 지정 (기본: 자동감지)')
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -157,7 +158,19 @@ def main():
     MIN_DIST_UM_actual = MIN_DIST_UM if sat_frac > 0.05 else 15.0
 
     MIN_T_TIP    = round(float(np.clip(otsu_val * MIN_T_TIP_RATIO,  0.10, 0.55)), 2)
-    ALPHA        = round(float(np.clip(np.log(COST_TARGET_RATIO), 4.0, 12.0)), 1)
+
+    # Alpha 자동 감지: T 분포 contrast 기반 (target_k=50 calibrated from 4-sample sweep)
+    # alpha = log(50) / (2 * contrast), where contrast = median(T_fg) - median(T_bg)
+    _T_fg_vals = T_down[T_down > otsu_val * 0.5].ravel()
+    _T_bg_vals = T_down[(T_down > 0.01) & (T_down < otsu_val * 0.3)].ravel()
+    if len(_T_fg_vals) > 200 and len(_T_bg_vals) > 200:
+        _contrast  = float(np.median(_T_fg_vals) - np.median(_T_bg_vals))
+        _alpha_auto = float(np.log(50.0) / (2 * max(_contrast, 0.01)))
+        ALPHA = round(float(np.clip(_alpha_auto, 4.0, 10.5)), 1)  # 10.5: sweep 결과 기반 상한
+    else:
+        ALPHA = round(float(np.clip(np.log(COST_TARGET_RATIO), 4.0, 12.0)), 1)
+    if args.alpha is not None:
+        ALPHA = round(float(args.alpha), 1)  # --alpha override 우선
     MIN_DIST_VOX = int(round(MIN_DIST_UM_actual / voxel_down))
     MIN_MEAN_T   = round(float(np.clip(otsu_val * MIN_MEAN_T_RATIO, 0.08, 0.40)), 2)
     MIN_SEG_T    = round(float(np.clip(otsu_val * MIN_SEG_T_RATIO,  0.02, 0.12)), 3)
