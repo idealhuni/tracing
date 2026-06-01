@@ -262,6 +262,117 @@ def main():
     print(f'FMM done in {time.time()-t0:.1f}s')
     print(f'Reachable: {np.isfinite(geodesic_dist).sum():,}')
 
+    # ── clean-background: Riemannian MST (전체 커버) ─────────────
+    # 소마 탐지 실패 시 이미지 중앙 근처 최대 블롭으로 보정
+    # (step1b에 추가 예정 — 현재는 step3 임시 구현)
+    _soma_ok = soma_r_um >= 2.0 and soma_mask_down.sum() >= 50
+    # soma 실패 시 center-blob으로 MST 시도 (step1b 개선 후 활성화 예정)
+    # 현재는 tip-seeding fallback이 더 안정적 → 비활성화
+    # if dark_frac > 0.95 and not _soma_ok: [center blob logic here]
+    if dark_frac > 0.95 and _soma_ok:
+        from scipy.ndimage import label as _cc_label
+        from collections import defaultdict as _dd
+        t_mst = time.time()
+
+        # 1. 소마 연결 component만 (이웃 세포 제외)
+        _thr = otsu_val * 0.15
+        _mask = (_cc_label(((T_down > _thr) | soma_mask_down))[0])
+        _slbl = np.unique(_mask[soma_mask_down]); _slbl = _slbl[_slbl > 0]
+        neuron_mask = (_mask == int(_slbl[0])) & np.isfinite(geodesic_dist)
+        fg = np.argwhere(neuron_mask)
+        N  = len(fg)
+        fg_d = geodesic_dist[fg[:,0], fg[:,1], fg[:,2]]
+        is_soma = np.array([soma_mask_down[fg[i,0],fg[i,1],fg[i,2]] for i in range(N)], dtype=bool)
+        c2i = {(int(fg[i,0]),int(fg[i,1]),int(fg[i,2])): i for i in range(N)}
+        offs = [(dz,dy,dx) for dz in(-1,0,1) for dy in(-1,0,1) for dx in(-1,0,1)
+                if not(dz==dy==dx==0)]
+        print(f'  MST neuron_mask: {N:,} voxels')
+
+        # 2. Parent 배정 — 소마 포함 (핵심 수정: not is_soma 제거)
+        par = np.full(N, -1, dtype=np.int32)
+        for i in np.argsort(fg_d):
+            if is_soma[i]: continue
+            z,y,x = int(fg[i,0]),int(fg[i,1]),int(fg[i,2])
+            bd, bj = fg_d[i], -1
+            for dz,dy,dx in offs:
+                j = c2i.get((z+dz,y+dy,x+dx),-1)
+                if j >= 0 and fg_d[j] < bd:
+                    bd, bj = fg_d[j], j
+            par[i] = bj
+
+        # 3. Children 구성 + 소마 BFS (cluster 내부 연결)
+        ch = _dd(list)
+        for i,p in enumerate(par):
+            if p >= 0: ch[p].append(i)
+        soma_root = int(np.where(is_soma)[0][np.argmin(fg_d[is_soma])])
+        sv, sq = {soma_root}, [soma_root]
+        while sq:
+            si = sq.pop(0)
+            sz,sy,sx = int(fg[si,0]),int(fg[si,1]),int(fg[si,2])
+            for dz,dy,dx in offs:
+                j = c2i.get((sz+dz,sy+dy,sx+dx),-1)
+                if j>=0 and is_soma[j] and j not in sv:
+                    sv.add(j); ch[si].append(j); sq.append(j)
+
+        # 4. DFS → SWC
+        smp_vox = max(1, int(round(1.5/voxel_down)))
+        ox,oy,oz = float(crop_offset_um[0]),float(crop_offset_um[1]),float(crop_offset_um[2])
+        _ss = soma_mask_down & ~_bin_erode(soma_mask_down, iterations=1)
+        _sc = np.argwhere(_ss).astype(np.float32).mean(axis=0) if _ss.any() else soma_vox_down
+        swc_rows = [(1,1,float(_sc[2])*voxel_down+ox,
+                       float(_sc[1])*voxel_down+oy,
+                       float(_sc[0])*voxel_down+oz, soma_r_um,-1)]
+        next_id = 2
+        stk = [(soma_root,1,0)]; vis = {soma_root}
+        while stk:
+            ci,ps,st = stk.pop()
+            kids = ch[ci]
+            if not is_soma[ci]:
+                nsk = [k for k in kids if not is_soma[k]]
+                if len(nsk)>=2 or len(nsk)==0 or st>=smp_vox:
+                    z,y,x = fg[ci]
+                    cx=float(x)*voxel_down+ox; cy=float(y)*voxel_down+oy; cz=float(z)*voxel_down+oz
+                    r=max(MIN_RADIUS_UM,float(radius_down[z,y,x]))
+                    nid=next_id; next_id+=1
+                    swc_rows.append((nid,3,cx,cy,cz,r,ps))
+                    ps=nid; st=0
+            for k in kids:
+                if k not in vis:
+                    vis.add(k)
+                    stk.append((k,ps,0 if is_soma[ci] else st+1))
+
+        # 5. Leaf pruning (5µm + T×0.30)
+        _pl = max(1,int(5.0/voxel_down)); _pt = otsu_val*0.30
+        for _ in range(20):
+            _sd={r[0]:r for r in swc_rows}; _chp=_dd(list)
+            for r in swc_rows:
+                if r[6]!=-1: _chp[r[6]].append(r[0])
+            _rid=next((r[0] for r in swc_rows if r[6]==-1),None)
+            lvs=[r[0] for r in swc_rows if r[0]!=_rid and not _chp.get(r[0])]
+            pids=set()
+            for lf in lvs:
+                br=[]; c=lf
+                while c!=_rid and c in _sd:
+                    br.append(c); p=_sd[c][6]
+                    if p==-1 or p not in _sd or p==_rid: break
+                    if len(_chp.get(p,[]))>1: break
+                    c=p
+                if len(br)<=_pl: pids.update(br)
+            if not pids: break
+            swc_rows=[r for r in swc_rows if r[0] not in pids]
+
+        _nt=sum(1 for r in swc_rows if r[6]!=-1 and not any(rr[6]==r[0] for rr in swc_rows))
+        print(f'  Riemannian MST: {len(swc_rows)} nodes  {time.time()-t_mst:.1f}s')
+        header=[f'# tracer_aniso AUTO — Riemannian MST (clean-background)',
+                f'# ALPHA={ALPHA}  dark_frac={dark_frac:.3f}',
+                f'# seed_tips={len(swc_rows)}  paths={len(swc_rows)}  tips={_nt}  nodes={len(swc_rows)}',
+                '# id type x y z radius parent']
+        lines=header+[f'{r[0]} {r[1]} {r[2]:.4f} {r[3]:.4f} {r[4]:.4f} {r[5]:.4f} {r[6]}'
+                      for r in swc_rows]
+        with open(str(OUT_SWC),'w') as f: f.write('\n'.join(lines)+'\n')
+        print(f'Saved: {OUT_SWC}')
+        return
+
     # ── Tip detection ───────────────────────────────────────────
     geo_finite = geodesic_dist.copy()
     geo_finite[~np.isfinite(geo_finite)] = 0
