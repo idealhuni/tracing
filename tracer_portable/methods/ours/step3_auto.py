@@ -110,8 +110,6 @@ def traceback_discrete(tip_vox, geo_dist, soma_mask, Zd, Yd, Xd,
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out-dir', required=True)
-    ap.add_argument('--alpha', type=float, default=None,
-                    help='FMM ALPHA 직접 지정 (기본: log(COST_TARGET_RATIO) 자동 계산)')
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -156,9 +154,6 @@ def main():
 
     MIN_T_TIP    = round(float(np.clip(otsu_val * MIN_T_TIP_RATIO,  0.10, 0.55)), 2)
     ALPHA        = round(float(np.clip(np.log(COST_TARGET_RATIO), 4.0, 12.0)), 1)
-    if args.alpha is not None:
-        ALPHA = round(float(args.alpha), 1)
-        print(f'  [Override] ALPHA = {ALPHA}')
     MIN_DIST_VOX = int(round(MIN_DIST_UM_actual / voxel_down))
     MIN_MEAN_T   = round(float(np.clip(otsu_val * MIN_MEAN_T_RATIO, 0.08, 0.40)), 2)
     MIN_SEG_T    = round(float(np.clip(otsu_val * MIN_SEG_T_RATIO,  0.02, 0.12)), 3)
@@ -189,6 +184,9 @@ def main():
         # fallback: tracer_aniso directory
         hfm_txt = script_dir.parent.parent.parent / 'tracer_aniso' / 'FileHFM_binary_dir.txt'
     BIN_DIR = hfm_txt.read_text().strip()
+    # 상대 경로 지원: '../../bin/...' 형식이면 script 위치 기준으로 해석
+    if not Path(BIN_DIR).is_absolute():
+        BIN_DIR = str((script_dir / BIN_DIR).resolve())
     agd.Eikonal.LibraryCall.binary_dir['FileHFM'] = BIN_DIR
     print(f'FileHFM: {BIN_DIR}')
 

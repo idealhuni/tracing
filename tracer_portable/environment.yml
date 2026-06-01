@@ -1,0 +1,20 @@
+name: tracer
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - scipy
+  - scikit-image
+  - matplotlib
+  - tifffile
+  - tqdm
+  - ipywidgets
+  - jupyter
+  - ipykernel
+  - pandas
+  - pip:
+    - agd
+    - scikit-fmm
