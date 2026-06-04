@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import tifffile
-from scipy.ndimage import (binary_closing, binary_erosion, binary_fill_holes,
+from scipy.ndimage import (binary_closing, binary_dilation, binary_erosion, binary_fill_holes,
                             binary_opening, distance_transform_edt,
                             gaussian_filter, label as sp_label)
 from skimage.filters import threshold_otsu
@@ -22,9 +22,10 @@ SOMA_HOLLOW           = False
 SOMA_SIGMA_UM         = 4.0
 SOMA_SEARCH_RADIUS_UM = 30.0
 SOMA_MAX_TUBULARITY   = 0.25
-SOMA_OPEN_RADIUS_UM   = 2.0
+SOMA_OPEN_RADIUS_UM   = 2.0    # dendrite 줄기 제거 (원래값 유지)
 SOMA_CLOSE_RADIUS_UM  = 1.5
 SOMA_ERODE_RADIUS_UM  = 0
+SOMA_DILATE_RADIUS_UM = 1.0    # open 침식 부분 복원 (dendrite 포함 안하게 작게)
 SOMA_BORDER_PAD_UM    = 15.0  # µm — exclusion margin from image edges for soma detection
 SOMA_ANCHOR_OFFSET    = 0.5
 
@@ -72,7 +73,7 @@ def main():
     print(f'Soma mode: {"hollow" if SOMA_HOLLOW else "filled"}')
     print(f'  sigma={SOMA_SIGMA:.1f}  search_r={SOMA_SEARCH_RADIUS}'
           f'  open={SOMA_OPEN_RADIUS_VX}  close={SOMA_CLOSE_RADIUS_VX}'
-          f'  erode={SOMA_ERODE_RADIUS_VX}  border_pad={SOMA_BORDER_PAD}')
+          f'  erode={SOMA_ERODE_RADIUS_VX}  border_pad={SOMA_BORDER_PAD}(capped per-axis)')
 
     # ── Soma Detection ───────────────────────────────────────────
     if SOMA_VOXEL is not None:
@@ -92,10 +93,11 @@ def main():
             print(f'  No Z-gradient (front-10% = {front_frac:.2f}) -> intensity score')
             soma_score = stack_norm
         soma_smooth = gaussian_filter(soma_score, sigma=SOMA_SIGMA)
-        p = SOMA_BORDER_PAD
         NZ, NY, NX = soma_smooth.shape
+        pz  = min(SOMA_BORDER_PAD, max(1, NZ // 4))
+        pxy = min(SOMA_BORDER_PAD, max(1, min(NY, NX) // 4))
         border_mask = np.ones_like(soma_smooth, dtype=bool)
-        border_mask[p:NZ-p, p:NY-p, p:NX-p] = False
+        border_mask[pz:NZ-pz, pxy:NY-pxy, pxy:NX-pxy] = False
         soma_smooth[border_mask] = 0.0
         soma_voxel = tuple(int(v) for v in
                            np.unravel_index(soma_smooth.argmax(), soma_smooth.shape))
@@ -150,10 +152,12 @@ def main():
             print('WARNING: hollow soma bridging failed')
             soma_mask_crop = np.zeros_like(bin_crop)
 
+    SOMA_DILATE_RADIUS_VX = max(1, int(round(SOMA_DILATE_RADIUS_UM / voxel_iso)))
     soma_mask_crop = binary_opening(soma_mask_crop, structure=ball(SOMA_OPEN_RADIUS_VX))
     soma_mask_crop = binary_closing(soma_mask_crop, structure=ball(SOMA_CLOSE_RADIUS_VX))
     soma_mask_crop = binary_erosion(soma_mask_crop, structure=ball(SOMA_ERODE_RADIUS_VX))
     soma_mask_crop = binary_fill_holes(soma_mask_crop)
+    soma_mask_crop = binary_dilation(soma_mask_crop, structure=ball(SOMA_DILATE_RADIUS_VX))
 
     soma_mask = np.zeros(stack.shape, dtype=bool)
     soma_mask[zs, ys, xs] = soma_mask_crop
@@ -184,8 +188,19 @@ def main():
     print(f'Centroid (vox)   : {tuple(soma_centroid_vox.round(1))}')
 
     # ── Save soma ────────────────────────────────────────────────
-    verts = np.zeros((0, 3), dtype=np.float32)
-    faces = np.zeros((0, 3), dtype=np.int32)
+    # soma_mask에서 marching cubes로 mesh 생성
+    try:
+        from skimage.measure import marching_cubes
+        _mask_pad = np.pad(soma_mask.astype(np.uint8), 1, constant_values=0)
+        verts_raw, faces_raw, _, _ = marching_cubes(_mask_pad, level=0.5, spacing=(1, 1, 1))
+        verts_raw -= 1  # padding 보정
+        verts = verts_raw.astype(np.float32)
+        faces = faces_raw.astype(np.int32)
+        print(f'Soma mesh        : {len(verts):,} verts  {len(faces):,} faces')
+    except Exception as _e:
+        print(f'Soma mesh failed ({_e}), using empty mesh')
+        verts = np.zeros((0, 3), dtype=np.float32)
+        faces = np.zeros((0, 3), dtype=np.int32)
 
     np.savez_compressed(str(OUT_SOMA_NPZ),
         soma_mask         = soma_mask,
