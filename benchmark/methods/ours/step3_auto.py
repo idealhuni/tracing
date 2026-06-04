@@ -808,6 +808,45 @@ def main():
     swc_rows = dense_rows
     print(f'  → Dense+M2: {n_dense} nodes added (total {len(swc_rows)})')
 
+    # ── Post-Dense smoothing: M2 per-node snap 진동 제거 ─────────
+    # Dense+M2는 각 노드를 독립 snap → 고주파 지그재그 발생
+    # σ=1.5 Gaussian으로 진동 제거, 진짜 centerline trend는 보존
+    _SMOOTH_DENSE = 1.5
+    _sd_ps = {r[0]: r for r in swc_rows}
+    _ch_ps = defaultdict(list)
+    for r in swc_rows:
+        if r[6] != -1: _ch_ps[r[6]].append(r[0])
+    seg_starts_ps = [r[0] for r in swc_rows
+                     if r[6] != -1 and (
+                         _sd_ps[r[6]][1] == 1 or
+                         len(_ch_ps.get(r[6], [])) >= 2)]
+    smooth_ps = {}
+    for start in seg_starts_ps:
+        seg = []
+        cur = start
+        while cur is not None:
+            seg.append(cur)
+            kids = _ch_ps.get(cur, [])
+            cur = kids[0] if len(kids) == 1 else None
+        if len(seg) < 4:
+            continue
+        arr = np.array([[_sd_ps[n][2], _sd_ps[n][3], _sd_ps[n][4]]
+                        for n in seg], dtype=np.float32)
+        s = np.stack([gaussian_filter1d(arr[:, i], sigma=_SMOOTH_DENSE)
+                      for i in range(3)], axis=1)
+        for idx, n in enumerate(seg):
+            if n not in smooth_ps and _sd_ps[n][1] != 1:
+                smooth_ps[n] = (float(s[idx, 0]), float(s[idx, 1]), float(s[idx, 2]))
+    swc_rows = [
+        (r[0], r[1],
+         smooth_ps[r[0]][0] if r[0] in smooth_ps else r[2],
+         smooth_ps[r[0]][1] if r[0] in smooth_ps else r[3],
+         smooth_ps[r[0]][2] if r[0] in smooth_ps else r[4],
+         r[5], r[6])
+        for r in swc_rows
+    ]
+    print(f'  → Post-dense smooth: {len(smooth_ps)}/{len(swc_rows)} nodes (σ={_SMOOTH_DENSE})')
+
     # ── Save SWC ─────────────────────────────────────────────────
     header = [
         f'# tracer_aniso AUTO — Riemannian FMM',
