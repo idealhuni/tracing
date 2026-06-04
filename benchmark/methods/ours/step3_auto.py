@@ -249,21 +249,42 @@ def main():
     print(f'FMM done in {time.time()-t0:.1f}s')
     print(f'Reachable: {np.isfinite(geodesic_dist).sum():,}')
 
-    # ── Tip detection ───────────────────────────────────────────
+    # ── Tip detection: Hybrid (T peaks + Geo peaks) ─────────────
+    # Fix A+B hybrid:
+    # Group T: T local max → reliable traceback (밝은 위치)
+    # Group G: geodesic local max (T mask) → true branch terminal (distal coverage)
+    # Merge: geo 우선, T peaks 중 geo와 MIN_DIST 내 겹치는 것 제거 → union
     geo_finite = geodesic_dist.copy()
     geo_finite[~np.isfinite(geo_finite)] = 0
 
     T_for_tips = gaussian_filter1d(T_down, sigma=SIGMA_Z_SMOOTH, axis=0)
 
-    _peaks = peak_local_max(T_for_tips, min_distance=MIN_DIST_VOX,
-                            threshold_abs=MIN_T_TIP, exclude_border=False)
-    tip_coords_all = _peaks if _peaks.dtype != bool else np.argwhere(_peaks)
-    tip_vals       = T_down[tip_coords_all[:,0], tip_coords_all[:,1], tip_coords_all[:,2]]
+    # Group T: 기존 T-based peaks
+    _pT = peak_local_max(T_for_tips, min_distance=MIN_DIST_VOX,
+                         threshold_abs=MIN_T_TIP, exclude_border=False)
+    coords_T = _pT if _pT.dtype != bool else np.argwhere(_pT)
 
-    tip_geo_all  = geodesic_dist[tip_coords_all[:,0],
-                                 tip_coords_all[:,1],
-                                 tip_coords_all[:,2]]
-    reachable    = np.isfinite(tip_geo_all)
+    # Group G: geodesic local max (T >= MIN_T_TIP 마스크 적용)
+    _geo_masked = np.where(
+        (T_for_tips >= MIN_T_TIP) & np.isfinite(geodesic_dist) & ~soma_mask_down,
+        geodesic_dist.astype(np.float32), 0.0)
+    _pG = peak_local_max(_geo_masked, min_distance=MIN_DIST_VOX,
+                         threshold_abs=1e-6, exclude_border=False)
+    coords_G = _pG if _pG.dtype != bool else np.argwhere(_pG)
+
+    # Merge: geo 우선. T peaks 중 geo peak과 MIN_DIST_VOX 이내인 것 제거
+    if len(coords_G) > 0 and len(coords_T) > 0:
+        _d, _ = cKDTree(coords_G.astype(float)).query(coords_T.astype(float))
+        coords_T_extra = coords_T[_d >= MIN_DIST_VOX]
+        tip_coords_all = np.vstack([coords_G, coords_T_extra])
+    elif len(coords_G) > 0:
+        tip_coords_all = coords_G
+    else:
+        tip_coords_all = coords_T
+
+    tip_vals    = T_down[tip_coords_all[:,0], tip_coords_all[:,1], tip_coords_all[:,2]]
+    tip_geo_all = geodesic_dist[tip_coords_all[:,0], tip_coords_all[:,1], tip_coords_all[:,2]]
+    reachable   = np.isfinite(tip_geo_all)
     tip_coords_r = tip_coords_all[reachable]
     tip_vals_r   = tip_vals[reachable]
     tip_geo_r    = tip_geo_all[reachable]
@@ -273,10 +294,26 @@ def main():
     tip_vals_s   = tip_vals_r[sort_idx][:MAX_TIPS]
     tip_geo_s    = tip_geo_r[sort_idx][:MAX_TIPS]
 
-    print(f'Tips detected: {len(tip_coords_all):,}  (reachable: {reachable.sum():,})')
+    # ── Geo/Euclidean ratio filter: FP seeds via winding paths 제거 ──
+    # 인접 구조물 terminal은 geodesic >> euclidean (dim 구간 경유)
+    # ratio = geo_cost / euclid_vox → outlier seeds 제거
+    _euclid_vox = np.linalg.norm(
+        tip_coords_s.astype(float) - soma_vox_down.astype(float), axis=1) + 1e-6
+    _geo_ratio  = tip_geo_s / _euclid_vox
+    _ratio_thr  = np.median(_geo_ratio) * 4.0   # median × 4 (adaptive per-sample)
+    _keep_ge    = _geo_ratio <= _ratio_thr
+    n_ge_filtered = int((~_keep_ge).sum())
+    if n_ge_filtered > 0:
+        tip_coords_s = tip_coords_s[_keep_ge]
+        tip_vals_s   = tip_vals_s[_keep_ge]
+        tip_geo_s    = tip_geo_s[_keep_ge]
+
+    print(f'Tips detected: {len(tip_coords_all):,}'
+          f'  (G={len(coords_G)}, T_extra={len(tip_coords_all)-len(coords_G)}, reachable: {reachable.sum():,})')
     print(f'Tips selected: {len(tip_coords_s)}'
           f'  geo={tip_geo_s[-1]:.1f}-{tip_geo_s[0]:.1f}'
-          f'  T={tip_vals_s.min():.3f}-{tip_vals_s.max():.3f}')
+          f'  T={tip_vals_s.min():.3f}-{tip_vals_s.max():.3f}'
+          f'  geo/euclid_filtered={n_ge_filtered}')
 
     # ── Traceback ────────────────────────────────────────────────
     t0 = time.time()
@@ -723,6 +760,53 @@ def main():
                                  row[5], row[6]))
         swc_rows = refined_swc
         print(f'  → Method1: {n_ref}/{len(swc_rows)} 노드 위치 조정 완료')
+
+    # ── Dense resampling + M2 snap (이미지 기반 실제 노드 감지) ──
+    # 선형 보간(인위적)이 아닌, 각 보간 위치에서 M2 cross-section snap으로
+    # 실제 이미지 intensity maximum에 노드 배치 → genuine detection
+    DENSE_STEP_UM = 0.5
+    _sd_d = {r[0]: r for r in swc_rows}
+    _new_id_d = max(r[0] for r in swc_rows) + 1
+    dense_rows = []; n_dense = 0
+    for row in swc_rows:
+        pid = row[6]
+        if pid == -1 or pid not in _sd_d:
+            dense_rows.append(row); continue
+        par = _sd_d[pid]
+        dx=row[2]-par[2]; dy=row[3]-par[3]; dz=row[4]-par[4]
+        dist=(dx*dx+dy*dy+dz*dz)**0.5
+        if dist <= DENSE_STEP_UM * 1.5:
+            dense_rows.append(row); continue
+        d_dir = np.array([dx,dy,dz]); d_nrm = np.linalg.norm(d_dir)
+        if d_nrm < 1e-6:
+            dense_rows.append(row); continue
+        d_dir /= d_nrm
+        arb = np.array([1,0,0]) if abs(d_dir[0]) < 0.9 else np.array([0,1,0])
+        u_d = np.cross(d_dir, arb); u_d /= np.linalg.norm(u_d)
+        v_d = np.cross(d_dir, u_d)
+        n_seg = max(1, int(dist / DENSE_STEP_UM))
+        prev_pid_d = pid
+        ts_d = np.linspace(-1, 1, _GRID)
+        for i in range(1, n_seg):
+            t = i / n_seg
+            xi=par[2]+t*dx; yi=par[3]+t*dy; zi=par[4]+t*dz
+            ri=par[5]+t*(row[5]-par[5])
+            gi=(xi/_vxy)+(ts_d[:,None]*u_d[0]*_srch_vxy+ts_d[None,:]*v_d[0]*_srch_vxy)
+            gj=(yi/_vxy)+(ts_d[:,None]*u_d[1]*_srch_vxy+ts_d[None,:]*v_d[1]*_srch_vxy)
+            gk=(zi/_vz) +(ts_d[:,None]*u_d[2]*_srch_vz +ts_d[None,:]*v_d[2]*_srch_vz)
+            gi=np.clip(gi,0,_Xd-1); gj=np.clip(gj,0,_Yd-1); gk=np.clip(gk,0,_Zd-1)
+            vv=_map_coords(_img,[gk.ravel(),gj.ravel(),gi.ravel()],
+                           order=1,mode='nearest').reshape(_GRID,_GRID)
+            bi_d,bj_d=np.unravel_index(vv.argmax(),vv.shape)
+            t1d,t2d=ts_d[bi_d],ts_d[bj_d]
+            sx=(t1d*u_d[0]+t2d*v_d[0])*_srch_vxy*_vxy
+            sy=(t1d*u_d[1]+t2d*v_d[1])*_srch_vxy*_vxy
+            sz=(t1d*u_d[2]+t2d*v_d[2])*_srch_vz *_vz
+            dense_rows.append((_new_id_d,row[1],xi+sx,yi+sy,zi+sz,ri,prev_pid_d))
+            prev_pid_d=_new_id_d; _new_id_d+=1; n_dense+=1
+        dense_rows.append((row[0],row[1],row[2],row[3],row[4],row[5],prev_pid_d))
+    swc_rows = dense_rows
+    print(f'  → Dense+M2: {n_dense} nodes added (total {len(swc_rows)})')
 
     # ── Save SWC ─────────────────────────────────────────────────
     header = [
