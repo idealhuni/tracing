@@ -24,13 +24,13 @@ MAX_TIPS              = 4000
 MIN_RADIUS_UM         = 0.1
 MERGE_DOT_MIN         = 0.99
 MIN_TORTUOSITY        = 1.01
-MIN_PATH_LEN_UM_FLOOR = 15.0
+MIN_PATH_LEN_UM_FLOOR = 10.0
 MAX_PATH_LEN_UM       = 600.0
 SIGMA_Z_SMOOTH        = 1.0
 MAX_Z_ARM_UM          = 7.0
 Z_PATH_THR            = 0.65
 COS_THR_SOMA          = 0.2
-MIN_PRIMARY_REACH_UM  = 100.0
+MIN_PRIMARY_REACH_UM  = 50.0
 MAX_FALLBACK_UM       = 1.5
 GAP_LEN_UM            = 2.0
 GAP_T_MULT            = 3.0
@@ -631,18 +631,76 @@ def main():
     if args.orig_image and args.vxy and Path(args.orig_image).exists():
         import tifffile as _tf
         from scipy import ndimage as _ndi
+        from scipy.ndimage import map_coordinates as _map_coords
         print(f'원본 이미지 refinement: {args.orig_image}')
         _img = _tf.imread(args.orig_image).astype(np.float32)
         if _img.ndim == 4:
             _img = _img[0] if _img.shape[0] < _img.shape[1] else _img[:, 0]
         _Zd, _Yd, _Xd = _img.shape
         _vxy = float(args.vxy); _vz = float(args.vz) if args.vz else 1.0
+
+        # ── Method 2: 수직 단면 최대 강도 스냅 (먼저 실행) ─────────────
+        # cross-section max snap → XY 정밀 위치, Z는 노드별 독립 snap
+        # M1 COM이 이후에 Z 진동을 자연스럽게 안정화
+        _SRCH     = 2.0   # µm 기준 탐색 반경
+        _SRCH_MAX_PX = 7  # XY 픽셀 상한: 고해상도(조밀) 샘플에서 인접 구조물 snap 방지
+        _GRID = 11
+        _srch_vxy = min(_SRCH / _vxy, float(_SRCH_MAX_PX))  # px (자동 적응)
+        _srch_vz  = _SRCH / _vz                              # px (µm 기준 고정)
+        _swc_dict = {r[0]: r for r in swc_rows}
+        _ch2 = defaultdict(list)
+        for r in swc_rows:
+            if r[6] != -1: _ch2[r[6]].append(r[0])
+
+        refined2 = []; n_ref2 = 0
+        for row in swc_rows:
+            if row[1] == 1: refined2.append(row); continue
+            x, y, z = row[2], row[3], row[4]
+            neighbors = []
+            if row[6] != -1 and row[6] in _swc_dict:
+                p = _swc_dict[row[6]]
+                neighbors.append(np.array([p[2]-x, p[3]-y, p[4]-z]))
+            for cid in _ch2.get(row[0], []):
+                c = _swc_dict[cid]
+                neighbors.append(np.array([c[2]-x, c[3]-y, c[4]-z]))
+            if not neighbors: refined2.append(row); continue
+            d = np.zeros(3)
+            for v in neighbors:
+                nrm = np.linalg.norm(v)
+                if nrm > 1e-6: d += v / nrm
+            nrm = np.linalg.norm(d)
+            if nrm < 1e-6: refined2.append(row); continue
+            d /= nrm
+            arb = np.array([1,0,0]) if abs(d[0]) < 0.9 else np.array([0,1,0])
+            u = np.cross(d, arb); u /= np.linalg.norm(u)
+            v2 = np.cross(d, u)
+            ts = np.linspace(-1, 1, _GRID)
+            gi = (x/_vxy) + (ts[:,None]*u[0]*_srch_vxy + ts[None,:]*v2[0]*_srch_vxy)
+            gj = (y/_vxy) + (ts[:,None]*u[1]*_srch_vxy + ts[None,:]*v2[1]*_srch_vxy)
+            gk = (z/_vz)  + (ts[:,None]*u[2]*_srch_vz  + ts[None,:]*v2[2]*_srch_vz)
+            gi = np.clip(gi, 0, _Xd-1); gj = np.clip(gj, 0, _Yd-1); gk = np.clip(gk, 0, _Zd-1)
+            vals = _map_coords(_img, [gk.ravel(), gj.ravel(), gi.ravel()],
+                               order=1, mode='nearest').reshape(_GRID, _GRID)
+            bi, bj = np.unravel_index(vals.argmax(), vals.shape)
+            t1, t2 = ts[bi], ts[bj]
+            dx = (t1*u[0] + t2*v2[0]) * _srch_vxy * _vxy
+            dy = (t1*u[1] + t2*v2[1]) * _srch_vxy * _vxy
+            dz = (t1*u[2] + t2*v2[2]) * _srch_vz  * _vz
+            if abs(dx)+abs(dy)+abs(dz) > 0.05: n_ref2 += 1
+            refined2.append((row[0], row[1], x+dx, y+dy, z+dz, row[5], row[6]))
+
+        swc_rows = refined2
+        print(f'  → Method2: {n_ref2}/{len(swc_rows)} 노드 위치 조정 완료'
+              f' (_SRCH_XY={_srch_vxy:.1f}px={_srch_vxy*_vxy:.2f}µm, Z={_srch_vz:.1f}px={_srch_vz*_vz:.2f}µm)')
+
+        # ── Method 1: 3D COM refinement (나중에 실행 → M2 Z 진동 안정화) ─
+        # M2의 per-node 독립 snap 이후 3D COM으로 Z 위치 자연스럽게 정규화
         _NH = 5  # ±5 voxel 탐색
-        _ox, _oy, _oz = crop_offset_um  # crop offset (step0에서 추가된 것)
+        _ox, _oy, _oz = crop_offset_um
         refined_swc = []
         n_ref = 0
         for row in swc_rows:
-            if row[1] == 1:  # soma → 이동 안 함
+            if row[1] == 1:
                 refined_swc.append(row); continue
             x, y, z = row[2], row[3], row[4]
             xi = int(np.clip(round(x / _vxy), 0, _Xd - 1))
@@ -664,7 +722,7 @@ def main():
                                  x + dx*_vxy, y + dy*_vxy, z + dz*_vz,
                                  row[5], row[6]))
         swc_rows = refined_swc
-        print(f'  → {n_ref}/{len(swc_rows)} 노드 위치 조정 완료')
+        print(f'  → Method1: {n_ref}/{len(swc_rows)} 노드 위치 조정 완료')
 
     # ── Save SWC ─────────────────────────────────────────────────
     header = [
