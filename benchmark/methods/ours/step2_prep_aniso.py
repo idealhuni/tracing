@@ -67,7 +67,12 @@ EDT_RADIUS_SCALE      = 0.7
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out-dir', required=True)
+    ap.add_argument('--target-voxel-down', type=float, default=None,
+                    help='FMM 목표 해상도 override (기본: 0.7µm)')
     args = ap.parse_args()
+    if args.target_voxel_down is not None:
+        global TARGET_VOXEL_DOWN_UM
+        TARGET_VOXEL_DOWN_UM = args.target_voxel_down
 
     out_dir = Path(args.out_dir)
 

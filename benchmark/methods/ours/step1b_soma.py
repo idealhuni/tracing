@@ -22,10 +22,9 @@ SOMA_HOLLOW           = False
 SOMA_SIGMA_UM         = 4.0
 SOMA_SEARCH_RADIUS_UM = 30.0
 SOMA_MAX_TUBULARITY   = 0.25
-SOMA_OPEN_RADIUS_UM   = 2.0    # dendrite 줄기 제거 (원래값 유지)
+SOMA_OPEN_RADIUS_UM   = 2.0
 SOMA_CLOSE_RADIUS_UM  = 1.5
 SOMA_ERODE_RADIUS_UM  = 0
-SOMA_DILATE_RADIUS_UM = 1.0    # open 침식 부분 복원 (dendrite 포함 안하게 작게)
 SOMA_BORDER_PAD_UM    = 15.0  # µm — exclusion margin from image edges for soma detection
 SOMA_ANCHOR_OFFSET    = 0.5
 
@@ -94,10 +93,9 @@ def main():
             soma_score = stack_norm
         soma_smooth = gaussian_filter(soma_score, sigma=SOMA_SIGMA)
         NZ, NY, NX = soma_smooth.shape
-        pz  = min(SOMA_BORDER_PAD, max(1, NZ // 4))
-        pxy = min(SOMA_BORDER_PAD, max(1, min(NY, NX) // 4))
+        p = SOMA_BORDER_PAD
         border_mask = np.ones_like(soma_smooth, dtype=bool)
-        border_mask[pz:NZ-pz, pxy:NY-pxy, pxy:NX-pxy] = False
+        border_mask[p:NZ-p, p:NY-p, p:NX-p] = False
         soma_smooth[border_mask] = 0.0
         soma_voxel = tuple(int(v) for v in
                            np.unravel_index(soma_smooth.argmax(), soma_smooth.shape))
@@ -152,12 +150,10 @@ def main():
             print('WARNING: hollow soma bridging failed')
             soma_mask_crop = np.zeros_like(bin_crop)
 
-    SOMA_DILATE_RADIUS_VX = max(1, int(round(SOMA_DILATE_RADIUS_UM / voxel_iso)))
     soma_mask_crop = binary_opening(soma_mask_crop, structure=ball(SOMA_OPEN_RADIUS_VX))
     soma_mask_crop = binary_closing(soma_mask_crop, structure=ball(SOMA_CLOSE_RADIUS_VX))
     soma_mask_crop = binary_erosion(soma_mask_crop, structure=ball(SOMA_ERODE_RADIUS_VX))
     soma_mask_crop = binary_fill_holes(soma_mask_crop)
-    soma_mask_crop = binary_dilation(soma_mask_crop, structure=ball(SOMA_DILATE_RADIUS_VX))
 
     soma_mask = np.zeros(stack.shape, dtype=bool)
     soma_mask[zs, ys, xs] = soma_mask_crop
