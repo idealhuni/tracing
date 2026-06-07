@@ -93,9 +93,13 @@ def main():
             soma_score = stack_norm
         soma_smooth = gaussian_filter(soma_score, sigma=SOMA_SIGMA)
         NZ, NY, NX = soma_smooth.shape
-        p = SOMA_BORDER_PAD
+        z_total_um  = NZ * voxel_iso
+        pz_um = min(SOMA_BORDER_PAD_UM, z_total_um * 0.10)
+        pz    = max(3, int(round(pz_um / voxel_iso)))
+        p     = SOMA_BORDER_PAD
         border_mask = np.ones_like(soma_smooth, dtype=bool)
-        border_mask[p:NZ-p, p:NY-p, p:NX-p] = False
+        border_mask[pz:NZ-pz, p:NY-p, p:NX-p] = False
+        print(f'  border_pad: Z={pz}vox ({pz_um:.1f}µm, z_total={z_total_um:.1f}µm)  XY={p}vox')
         soma_smooth[border_mask] = 0.0
         soma_voxel = tuple(int(v) for v in
                            np.unravel_index(soma_smooth.argmax(), soma_smooth.shape))
